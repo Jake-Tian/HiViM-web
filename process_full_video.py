@@ -57,11 +57,14 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         #--------------------------------
         prompt = "Character appearance from previous videos: \n" + character_appearance + "\n" + prompt_generate_episodic_memory
         messages = generate_messages(current_images, prompt)
-        response = get_response(messages)
-        print(response)
+        try:
+            response = get_response(messages)
+        except Exception as e:
+            print(f"LLM call failed, retrying... Error: {e}")
+            response = get_response(messages)
+        # print(response)
         response = strip_code_fences(response)
         response_dict = json.loads(response)
-
 
         # 1. Process the character's behavior
         behaviors = response_dict["characters_behavior"]
@@ -91,7 +94,11 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         # Semantic Memory
         #--------------------------------
         behavior_prompt = prompt_extract_triples + "\n" + "\n".join(behaviors)
-        triples_response = generate_text_response(behavior_prompt)
+        try:
+            triples_response = generate_text_response(behavior_prompt)
+        except Exception as e:
+            print(f"LLM call failed, retrying... Error: {e}")
+            triples_response = generate_text_response(behavior_prompt)
 
         triples_response = strip_code_fences(triples_response)
         triples = json.loads(triples_response)

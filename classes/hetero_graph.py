@@ -601,7 +601,11 @@ class HeteroGraph:
         
         # Create the full prompt
         full_prompt = "Character: {character_name}\n\nCharacter behaviors (from graph edges):\n{edges_text}" + "\n" + prompt_character_summary
-        attributes = generate_text_response(full_prompt)
+        try:
+            attributes = generate_text_response(full_prompt)
+        except Exception as e:
+            print(f"LLM call failed, retrying... Error: {e}")
+            attributes = generate_text_response(full_prompt)
         return attributes
 
     # --------------------------------------------------------
