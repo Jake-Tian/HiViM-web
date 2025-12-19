@@ -31,6 +31,7 @@ logs/
 
 # Files with secrets
 preprocessing/local_voice_diarization.py
+utils/mllm.py
 
 # IDE
 .vscode/
