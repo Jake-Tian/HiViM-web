@@ -28,6 +28,7 @@ data/
 
 boxmot/
 logs/
+log.txt
 
 # Files with secrets
 preprocessing/local_voice_diarization.py
