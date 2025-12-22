@@ -1,3 +1,4 @@
+from utils.llm import get_embedding
 
 class BaseNode:
     """Base class for all node types with integer IDs."""
@@ -22,34 +23,19 @@ class BaseNode:
 
 class CharacterNode(BaseNode):
 
-    def __init__(self, name, faces=None):
+    def __init__(self, name):
         super().__init__(name)
-        self.faces = faces or []
-    
-    def add_face(self, face):
-        """
-        Add a face to this character.
-        
-        Args:
-            face: Face dictionary with 'embedding', 'bbox', 'confidence', and optionally 'track_id'
-        """
-        self.faces.append(face)
-    
-    def get_faces(self):
-        """Get all faces for this character."""
-        return self.faces
-    
-    def num_faces(self):
-        """Get the number of faces for this character."""
-        return len(self.faces)
-
 
 class ObjectNode(BaseNode):
     
-    def __init__(self, name, owner=None, attribute=None):
+    def __init__(self, name, owner=None, attribute=None, embedding=None):
         super().__init__(name)
         self.owner = owner
         self.attribute = attribute
+        if attribute is not None:
+            self.embedding = get_embedding(attribute + " " + name)
+        else:
+            self.embedding = get_embedding(name)
 
     def get_owner(self):
         """Get the owner of this object."""

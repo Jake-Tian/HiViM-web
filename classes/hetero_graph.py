@@ -1,10 +1,11 @@
 import json
+import numpy as np
 from .node_class import CharacterNode, ObjectNode
 from .edge_class import Edge
 from .conversation import Conversation
 from collections import defaultdict
 from utils.prompts import prompt_character_summary, prompt_character_relationships
-from utils.llm import generate_text_response
+from utils.llm import generate_text_response, get_embedding, get_multiple_embeddings
 from utils.general import strip_code_fences
 
 
@@ -636,6 +637,12 @@ class HeteroGraph:
         
         return result_edges
 
+    def edge_embedding_insertion(self):
+        edge_contents = [edge.content for edge in self.edges.values()]
+        embeddings = get_multiple_embeddings(edge_contents)
+        for edge, embedding in zip(self.edges.values(), embeddings):
+            edge.embedding = embedding
+        print(len(embeddings), "embeddings inserted")
 
     # --------------------------------------------------------
     # Abstract Information API
@@ -835,4 +842,425 @@ class HeteroGraph:
                     pass
         
         return relationships_created
+
+    # --------------------------------------------------------
+    # Search API
+    # --------------------------------------------------------
+    def _cosine_similarity(self, vec1, vec2):
+        """
+        Calculate cosine similarity between two vectors.
+        
+        Args:
+            vec1: First vector (list or numpy array)
+            vec2: Second vector (list or numpy array)
+        
+        Returns:
+            float: Cosine similarity score between -1 and 1
+        """
+        import time
+        start_time = time.time()
+        vec1 = np.array(vec1)
+        vec2 = np.array(vec2)
+        
+        dot_product = np.dot(vec1, vec2)
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        print(f"Time taken: {time.time() - start_time} seconds")
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
+    
+    def search_high_level_edges(self, query_triples, k):
+        """
+        Search for top-k high-level edges (clip_id=0, scene=None) using embedding-based similarity.
+        High-level edges represent character attributes and relationships.
+        
+        Args:
+            query_triples: List of query triples in format [source, content, target] or single triple
+            k: Number of top results to return
+        
+        Returns:
+            list: List of Edge objects, sorted by relevance (embedding similarity + confidence)
+        """
+        if not query_triples:
+            return []
+        
+        # Normalize query_triples to list of lists
+        if isinstance(query_triples[0], str):
+            query_triples = [query_triples]
+        
+        # Filter high-level edges (clip_id=0, scene=None)
+        candidate_edges = []
+        for edge_id, edge in self.edges.items():
+            if edge.clip_id == 0 and edge.scene is None:
+                candidate_edges.append(edge)
+        
+        if not candidate_edges:
+            return []
+        
+        # Pre-compute query embeddings for each triple component
+        query_embeddings = {}
+        for q_triple in query_triples:
+            q_source = q_triple[0] if len(q_triple) > 0 else None
+            q_content = q_triple[1] if len(q_triple) > 1 else None
+            q_target = q_triple[2] if len(q_triple) > 2 else None
+            
+            if q_source and q_source != "?":
+                if q_source not in query_embeddings:
+                    query_embeddings[q_source] = get_embedding(q_source)
+            if q_content and q_content != "?":
+                if q_content not in query_embeddings:
+                    query_embeddings[q_content] = get_embedding(q_content)
+            if q_target and q_target != "?":
+                if q_target not in query_embeddings:
+                    query_embeddings[q_target] = get_embedding(q_target)
+        
+        # Score edges based on embedding similarity with bidirectional matching
+        scored_edges = []
+        for edge in candidate_edges:
+            score = 0.0
+            
+            # Match against each query triple using embeddings
+            for q_triple in query_triples:
+                q_source = q_triple[0] if len(q_triple) > 0 else None
+                q_content = q_triple[1] if len(q_triple) > 1 else None
+                q_target = q_triple[2] if len(q_triple) > 2 else None
+                
+                # Content similarity (most important, direction-independent)
+                content_score = 0.0
+                if q_content and q_content != "?":
+                    if edge.content:
+                        try:
+                            edge_content_emb = get_embedding(edge.content)
+                            sim = self._cosine_similarity(query_embeddings[q_content], edge_content_emb)
+                            content_score = sim * 0.50  # Content is most important
+                        except Exception:
+                            # Fallback to exact match
+                            if edge.content == q_content:
+                                content_score = 2.0
+                
+                # Bidirectional entity matching: try both directions and keep the higher score
+                entity_score = 0.0
+                if (q_source and q_source != "?") or (q_target and q_target != "?"):
+                    normal_direction_score = 0.0
+                    reversed_direction_score = 0.0
+                    
+                    # Normal direction: (query source, edge source) + (query target, edge target)
+                    if q_source and q_source != "?" and edge.source:
+                        try:
+                            edge_source_emb = get_embedding(edge.source)
+                            sim = self._cosine_similarity(query_embeddings[q_source], edge_source_emb)
+                            normal_direction_score += sim * 0.25
+                        except Exception:
+                            if edge.source == q_source:
+                                normal_direction_score += 1.0
+                    
+                    if q_target and q_target != "?" and edge.target:
+                        try:
+                            edge_target_emb = get_embedding(str(edge.target))
+                            sim = self._cosine_similarity(query_embeddings[q_target], edge_target_emb)
+                            normal_direction_score += sim * 0.25
+                        except Exception:
+                            if str(edge.target) == q_target:
+                                normal_direction_score += 1.0
+                    
+                    # Reversed direction: (query source, edge target) + (query target, edge source)
+                    if q_source and q_source != "?" and edge.target:
+                        try:
+                            edge_target_emb = get_embedding(str(edge.target))
+                            sim = self._cosine_similarity(query_embeddings[q_source], edge_target_emb)
+                            reversed_direction_score += sim * 0.25
+                        except Exception:
+                            if str(edge.target) == q_source:
+                                reversed_direction_score += 1.0
+                    
+                    if q_target and q_target != "?" and edge.source:
+                        try:
+                            edge_source_emb = get_embedding(edge.source)
+                            sim = self._cosine_similarity(query_embeddings[q_target], edge_source_emb)
+                            reversed_direction_score += sim * 0.25
+                        except Exception:
+                            if edge.source == q_target:
+                                reversed_direction_score += 1.0
+                    
+                    # Keep the higher score
+                    entity_score = max(normal_direction_score, reversed_direction_score)
+                
+                score += content_score + entity_score
+            
+            # Add confidence score if available
+            if hasattr(edge, 'confidence') and edge.confidence:
+                score += edge.confidence / 100.0 * 0.3  # Weight confidence
+            
+            scored_edges.append((score, edge))
+        
+        # Sort by score (descending) and return top-k
+        scored_edges.sort(key=lambda x: x[0], reverse=True)
+        return [edge for _, edge in scored_edges[:k]]
+    
+
+    def search_low_level_edges(self, query_triples, k, spatial_constraints=None):
+        """
+        Search for top-k low-level edges (clip_id>0, scene is not None) using embedding-based similarity.
+        Low-level edges represent specific actions and states.
+        
+        Args:
+            query_triples: List of query triples in format [source, content, target] or single triple
+            k: Number of top results to return
+            spatial_constraints: Optional spatial constraint (location/scene string)
+        
+        Returns:
+            list: List of Edge objects, sorted by relevance (embedding similarity + scene similarity)
+        """
+        if not query_triples:
+            return []
+        
+        # Normalize query_triples to list of lists
+        if isinstance(query_triples[0], str):
+            query_triples = [query_triples]
+        
+        # Pre-compute query embeddings for each triple component
+        query_embeddings = {}
+        for q_triple in query_triples:
+            q_source = q_triple[0] if len(q_triple) > 0 else None
+            q_content = q_triple[1] if len(q_triple) > 1 else None
+            q_target = q_triple[2] if len(q_triple) > 2 else None
+            
+            if q_source and q_source != "?":
+                if q_source not in query_embeddings:
+                    query_embeddings[q_source] = get_embedding(q_source)
+            if q_content and q_content != "?":
+                if q_content not in query_embeddings:
+                    query_embeddings[q_content] = get_embedding(q_content)
+            if q_target and q_target != "?":
+                if q_target not in query_embeddings:
+                    query_embeddings[q_target] = get_embedding(q_target)
+        
+        # Pre-compute spatial constraint embedding if provided
+        spatial_embedding = None
+        if spatial_constraints:
+            if isinstance(spatial_constraints, str):
+                spatial_embedding = get_embedding(spatial_constraints)
+            elif isinstance(spatial_constraints, dict):
+                location = spatial_constraints.get("location")
+                scene = spatial_constraints.get("scene")
+                if location:
+                    spatial_embedding = get_embedding(location)
+                elif scene:
+                    spatial_embedding = get_embedding(scene)
+        
+        # Filter low-level edges (clip_id>0, scene is not None)
+        candidate_edges = []
+        for edge_id, edge in self.edges.items():
+            if edge.clip_id > 0 and edge.scene is not None:
+                candidate_edges.append(edge)
+        
+        if not candidate_edges:
+            return []
+        
+        # Score edges based on embedding similarity with bidirectional matching
+        # Formula: Similarity = (0.25*source + 0.5*content + 0.25*target) * scene_similarity
+        scored_edges = []
+        for edge in candidate_edges:
+            base_similarity = 0.0
+            
+            # Match against each query triple using embeddings
+            for q_triple in query_triples:
+                q_source = q_triple[0] if len(q_triple) > 0 else None
+                q_content = q_triple[1] if len(q_triple) > 1 else None
+                q_target = q_triple[2] if len(q_triple) > 2 else None
+                
+                # Calculate source, content, and target similarities with bidirectional matching
+                source_sim = 0.0
+                content_sim = 0.0
+                target_sim = 0.0
+                
+                # Content similarity (direction-independent)
+                if q_content and q_content != "?" and edge.content:
+                    try:
+                        edge_content_emb = get_embedding(edge.content)
+                        content_sim = self._cosine_similarity(query_embeddings[q_content], edge_content_emb)
+                    except Exception:
+                        # Fallback to exact match
+                        if edge.content == q_content:
+                            content_sim = 1.0
+                
+                # Bidirectional entity matching: try both directions and keep the higher score
+                if (q_source and q_source != "?") or (q_target and q_target != "?"):
+                    normal_source_sim = 0.0
+                    normal_target_sim = 0.0
+                    reversed_source_sim = 0.0
+                    reversed_target_sim = 0.0
+                    
+                    # Normal direction: (query source, edge source) and (query target, edge target)
+                    if q_source and q_source != "?" and edge.source:
+                        try:
+                            edge_source_emb = get_embedding(edge.source)
+                            normal_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_source_emb)
+                        except Exception:
+                            if edge.source == q_source:
+                                normal_source_sim = 1.0
+                    
+                    if q_target and q_target != "?" and edge.target:
+                        try:
+                            edge_target_emb = get_embedding(str(edge.target))
+                            normal_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_target_emb)
+                        except Exception:
+                            if str(edge.target) == q_target:
+                                normal_target_sim = 1.0
+                    
+                    # Reversed direction: (query source, edge target) and (query target, edge source)
+                    if q_source and q_source != "?" and edge.target:
+                        try:
+                            edge_target_emb = get_embedding(str(edge.target))
+                            reversed_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_target_emb)
+                        except Exception:
+                            if str(edge.target) == q_source:
+                                reversed_source_sim = 1.0
+                    
+                    if q_target and q_target != "?" and edge.source:
+                        try:
+                            edge_source_emb = get_embedding(edge.source)
+                            reversed_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_source_emb)
+                        except Exception:
+                            if edge.source == q_target:
+                                reversed_target_sim = 1.0
+                    
+                    # Keep the higher scores for each component
+                    source_sim = max(normal_source_sim, reversed_target_sim)  # source from normal or target from reversed
+                    target_sim = max(normal_target_sim, reversed_source_sim)  # target from normal or source from reversed
+                
+                # Base similarity: 0.25*source + 0.5*content + 0.25*target
+                triple_similarity = 0.25 * source_sim + 0.5 * content_sim + 0.25 * target_sim
+                base_similarity = max(base_similarity, triple_similarity)  # Keep max across all query triples
+            
+            # Calculate scene similarity
+            scene_sim = 1.0  # Default to 1.0 if no spatial constraint (no penalty)
+            if spatial_embedding and edge.scene:
+                try:
+                    edge_scene_emb = get_embedding(edge.scene)
+                    scene_sim = self._cosine_similarity(spatial_embedding, edge_scene_emb)
+                except Exception:
+                    # Fallback to substring match
+                    if isinstance(spatial_constraints, str):
+                        if spatial_constraints.lower() in edge.scene.lower():
+                            scene_sim = 1.0
+                        else:
+                            scene_sim = 0.0
+                    else:
+                        scene_sim = 0.0
+            
+            # Final score: base_similarity * scene_similarity
+            score = base_similarity * scene_sim
+            
+            scored_edges.append((score, edge))
+        
+        # Sort by score (descending) and return top-k
+        scored_edges.sort(key=lambda x: x[0], reverse=True)
+        return [edge for _, edge in scored_edges[:k]]
+    
+    
+    def search_conversations(self, query, k, speaker_strict=None, context_window=2):
+        """
+        Search for top-k conversation messages (lines) with context using embedding-based similarity.
+        Returns conversation segments with surrounding messages to keep context (question and answer).
+        
+        Args:
+            query: Query string (natural language question)
+            k: Number of top conversation segments to return
+            speaker_strict: Optional list of speakers to filter by (e.g., ["<Alice>", "<Bob>"])
+                          Only return conversations where ALL specified speakers are present
+            context_window: Number of messages before and after to include for context (default: 2)
+        
+        Returns:
+            list: List of dictionaries with format:
+                {
+                    "conversation_id": int,
+                    "clip_id": int,
+                    "matched_message_index": int,
+                    "context_messages": [[speaker, text], ...],  # Messages with context
+                    "score": float
+                }
+        """
+        if not query or not isinstance(query, str):
+            return []
+        
+        # Get embedding for query
+        try:
+            query_embedding = get_embedding(query)
+        except Exception as e:
+            print(f"Warning: Failed to get query embedding: {e}")
+            return []
+        
+        # Search through all conversations
+        scored_segments = []
+        
+        for conv_id, conversation in self.conversations.items():
+            # Filter by speaker_strict if provided
+            if speaker_strict:
+                # Normalize speaker names (add angle brackets if needed)
+                normalized_speakers = set()
+                for speaker in speaker_strict:
+                    if not speaker.startswith("<") or not speaker.endswith(">"):
+                        normalized_speakers.add(f"<{speaker}>")
+                    else:
+                        normalized_speakers.add(speaker)
+                
+                # Check if ALL specified speakers are in this conversation
+                if not normalized_speakers.issubset(conversation.speakers):
+                    continue
+            
+            # Search through messages in this conversation
+            for msg_idx, message in enumerate(conversation.messages):
+                if not isinstance(message, list) or len(message) < 2:
+                    continue
+                
+                speaker = message[0]
+                text = message[1]
+                
+                if not text or not isinstance(text, str):
+                    continue
+                
+                # Reorganize message to format: "<character>: spoken content"
+                formatted_message = f"{speaker}: {text}"
+                
+                # Calculate embedding similarity for formatted message
+                try:
+                    message_embedding = get_embedding(formatted_message)
+                    text_similarity = self._cosine_similarity(query_embedding, message_embedding)
+                except Exception:
+                    # Fallback to keyword matching
+                    formatted_lower = formatted_message.lower()
+                    query_lower = query.lower()
+                    if query_lower in formatted_lower or any(word in formatted_lower for word in query_lower.split()):
+                        text_similarity = 0.5
+                    else:
+                        text_similarity = 0.0
+                
+                # Calculate final score (no speaker bonus needed since we search formatted message)
+                score = text_similarity
+                
+                # Only include messages with positive score
+                if score > 0:
+                    # Get context messages (before and after)
+                    start_idx = max(0, msg_idx - context_window)
+                    end_idx = min(len(conversation.messages), msg_idx + context_window + 1)
+                    context_messages = conversation.messages[start_idx:end_idx]
+                    
+                    # Get clip_id (use first clip if multiple)
+                    clip_id = conversation.clips[0] if conversation.clips else None
+                    
+                    scored_segments.append({
+                        "conversation_id": conv_id,
+                        "clip_id": clip_id,
+                        "matched_message_index": msg_idx,
+                        "context_messages": context_messages,
+                        "score": score
+                    })
+        
+        # Sort by score (descending) and return top-k
+        scored_segments.sort(key=lambda x: x["score"], reverse=True)
+        return scored_segments[:k]
 

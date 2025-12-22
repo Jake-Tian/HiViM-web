@@ -10,3 +10,19 @@ def generate_text_response(prompt):
         ]
     )
     return response.choices[0].message.content
+
+def get_embedding(text):
+    client = OpenAI()
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text, 
+    )
+    return response.data[0].embedding
+
+def get_multiple_embeddings(texts):
+    client = OpenAI()
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=texts, 
+    )
+    return [response.data[i].embedding for i in range(len(response.data))]

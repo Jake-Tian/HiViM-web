@@ -33,14 +33,14 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         output_episodic_memory_path = f"data/episodic_memory/{video_name}.json"
     
     # Get sorted image folders
-    # image_folders = sorted(
-    #     [str(folder) for folder in frames_dir.iterdir() if folder.is_dir()],
-    #     key=lambda x: int(Path(x).name)
-    # )
-    image_folders = ["data/frames/bedroom_12/1", 
-                    "data/frames/bedroom_12/2", 
-                    "data/frames/bedroom_12/3", 
-                    "data/frames/bedroom_12/4"]
+    image_folders = sorted(
+        [str(folder) for folder in frames_dir.iterdir() if folder.is_dir()],
+        key=lambda x: int(Path(x).name)
+    )
+    # image_folders = ["data/frames/bedroom_12/1", 
+    #                 "data/frames/bedroom_12/2", 
+    #                 "data/frames/bedroom_12/3", 
+    #                 "data/frames/bedroom_12/4"]
     
     character_appearance = "{}"
     previous_conversation = False
@@ -130,6 +130,9 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             print("Continuing to next folder...")
             continue
 
+    # Insert edge embeddings
+    graph.edge_embedding_insertion()
+
     # --------------------------------
     # Abstract Memory
     # --------------------------------
@@ -199,7 +202,7 @@ def main():
     else:
         selected = video_names
     
-    selected = ["bedroom_12"] # Comment this out to process all videos
+    # selected = ["bedroom_12"] # Comment this out to process all videos
 
     for video_name in selected:
         try:
