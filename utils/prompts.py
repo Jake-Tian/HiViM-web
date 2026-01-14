@@ -21,11 +21,23 @@ Your tasks:
 3. **Character Appearance**
    - Describe each character's appearance: facial features, clothing, body shape, hairstyle, or other distinctive characteristics.
    - Each characteristic should be concise, separated by commas.
-   - **New characters**: Before creating a new unknown character (<character_X>), FIRST check if any previously seen unknown character from earlier clips matches the appearance. If a match is found, add an equivalence line at the **start of characters_behavior**. Then remove its information from character_appearance. Only create a new unknown character if no previous unknown character matches.
-   - **Existing characters** (if previous appearance info provided): Update if changes observed, enhance if new details visible, otherwise keep unchanged.
+   - **CRITICAL: Character Matching Before Creating New Characters**
+     Before creating ANY new character (known or unknown), you MUST:
+     1. **Check ALL previously seen characters** (both known names like <Anna>, <Susan>, <Alice> AND unknown like <character_1>, <character_2>, etc.) from ALL earlier clips.
+     2. **Compare appearance features** focusing on:
+        - **Stable features**: Body shape, facial structure, skin tone, general build
+        - **Variable features** (may change): Hair length/style, clothing, accessories, glasses
+        - **Distinctive combinations**: Unique combinations of features that identify a person
+     3. **Match if**: The person matches a previously seen character based on stable features AND distinctive combinations, even if variable features (hair, clothing) have changed.
+     4. **If match found**: 
+        - If matching a known character: Use that character's name directly (e.g., <Anna>)
+        - If matching an unknown character: Add equivalence line at **start of characters_behavior** (e.g., "Equivalence: <character_3>, <Anna>")
+        - Do NOT create a new character entry in character_appearance
+     5. **Only create new character** if NO previous character matches after thorough comparison.
+   - **Existing characters** (if previous appearance info provided): Update if changes observed (e.g., hair cut, clothing change), enhance if new details visible, otherwise keep unchanged.
    - If the character leaves the scene, keep their appearance information in the dictionary.
    - If two characters in the scene look similar, extract the most distinctive features to describe them.
-   - **Minimize unknown characters**: Try to match new characters with previously seen unknown characters based on appearance similarity. Only create new unknown characters when absolutely necessary.
+   - **Minimize total characters**: The goal is to have the MINIMUM number of unique characters. When in doubt, match to existing characters rather than creating new ones.
    - Output format: Python dictionary {<character>: appearance information}.
 
 4. **Scene**: Use one word or phrase to describe the scene in the current video (eg. "bedroom", "gym", "office", etc.).
@@ -33,13 +45,17 @@ Your tasks:
 
 Special Rules:
 - Use angle brackets to represent the characters eg. <Alice>, <Bob>, <robot>, <character_1>, etc.
-- **Character identification priority**: 
-  1. Use known character names if mentioned in conversation or clearly identifiable.
-  2. If character is unknown, FIRST check if any previous unknown character (<character_1>, <character_2>, etc. from earlier clips) matches the appearance - reuse that character name.
-  3. Only create a NEW unknown character (<character_X>) if no previous unknown character matches.
-  4. Minimize the total number of unknown characters across all clips.
-- If an unknown character is later identified, add an equivalence line at the **start of characters_behavior**. Then remove its information from character_appearance and replace it with the real name: 
-  Example: "Equivalence: <character_1>, <Alice>"
+- **Character identification priority** (MUST follow in order):
+  1. **Check ALL previously seen characters first** (both known names AND unknown characters from ALL earlier clips):
+     - Compare the person's appearance with EVERY character seen before
+     - Focus on stable features (body shape, facial structure) and distinctive feature combinations
+     - Account for appearance changes (hair can be cut, clothing can change, glasses can be removed/added)
+  2. **If match found with known character**: Use that character's name directly (e.g., if person matches <Anna>, use <Anna>)
+  3. **If match found with unknown character**: Add equivalence line at **start of characters_behavior** (e.g., "Equivalence: <character_3>, <Anna>")
+  4. **Only if NO match found**: Create a new character:
+     - If name mentioned in conversation: Use that name
+     - Otherwise: Create new unknown character (<character_X>) with lowest available number
+  5. **CRITICAL**: Minimize the total number of characters. When appearance is similar, prefer matching to existing characters over creating new ones.
 - Include the robot (<robot>) if present:
   - It wears black gloves and has no visible face (it holds the camera).
   - Describe its behavior and conversation.
@@ -77,118 +93,136 @@ Checklist:
 
 
 prompt_extract_triples = """
-You are given a list of action sentences describing character behavior.  
-Convert each sentence into triples of the form:
+You are given a list of **action sentences** describing character behavior.  
+Convert each sentence into **triples** of the form:
 
 [target, content, source]
 
-Return ONLY a valid JSON array (list of lists). No explanation.
+Return **ONLY** a valid JSON array (list of lists).  
+No explanation. No markdown. No extra text.
 
-### OUTPUT FORMAT
-- Strict JSON only: double quotes, no trailing commas.
-- Each triple: [target, content, source]
-- Preserve input order.
+## OUTPUT FORMAT
+- Strict JSON only
+- Use double quotes
+- No trailing commas
+- Each triple must be:
+  [target, content, source]
+- Preserve the **original sentence order**
+- Preserve the **original action order** within each sentence
 
-### RULES
-1. TARGET & SOURCE (Subject and Object)
-- May be characters (with angle brackets) or objects/entities.
-- Copy subjects verbatim (e.g., "<robot>", "coffee").
-- Use `null` if no source exists.
+## DEFINITIONS
+- **Target**: the entity performing the action or whose state is described
+- **Content**: the action, relation, or state (verb-centered)
+- **Source**: the entity the action is applied to or related to  
+  Use `null` if none exists
 
-2. CONTENT (Predicate)
-- Must be the verb/action or relationship.
-- Use **base form or present participle** ("walks", "puts", "looking").
-- Include auxiliary verbs/prepositions when relevant ("picks up", "turns left", "looks at").
-- Merge direction/position into the verb:
-  - "<Lily> turns left" → ["<Lily>", "turns left", null]
-  - "<robot> moves forward" → ["<robot>", "moves forward", null]
-- Merge body parts into the verb:
-  - "<Alice> hits <Bob>'s head" → ["<Alice>", "hits head", "<Bob>"]
-  - "<Emma> touches <David>'s shoulder" → ["<Emma>", "touches shoulder", "<David>"]
-- Communication actions: encode directly
-  - ["<Alice>", "asks", "<Bob>"]
-  - ["<Emma>", "greets", "<David>"]
-  - Do NOT create abstract objects ("question", "message").
-- State changes: use verbs like "is on", "becomes", "changes to".
-- Prefer completed actions ("puts") over partial ones ("is putting").
+## EXTRACTION PRIORITY (FOLLOW IN ORDER)
 
-3. OBJECT IDENTIFICATION
-- Objects = nouns (physical things, abstract concepts, named items).
-- Format: noun or noun#attribute or noun@<character>.
-- Singularize plurals ("books" → "book").
-- Keep named objects verbatim ("bottle of Nescafe").
-- Split compound objects into separate triples.
-- Use `null` if no object is extractable.
-  - Example: "<Harry> walks" → ["<Harry>", "walk", null]
+1. Identify actors (targets)
+2. Identify actions / relations (content)
+3. Identify affected entities (sources)
+4. Resolve pronouns and possessives
+5. Split compound structures
+6. Normalize verbs
+7. Add state relations
+8. Deduplicate implied redundancy
 
-4. ATTRIBUTES (#)
-- Attributes must be identity-defining: color, material, shape, size, brand/type.
-- Example: "mug#white", "bag#leather".
-- Do NOT encode location/position as attributes.
+## RULES: 
 
-5. OWNERSHIP (@)
-- Use `noun@<character>` for personal possessions:
-  - Devices: phone, wallet, keys, watch, glasses
-  - Clothing/accessories: jacket, bag, hat
-- Triggered by possessive pronouns ("her phone", "his bag").
-- Do NOT use for shared/public objects (table, chair, mug, door, basketball).
+1. TARGET & SOURCE (ENTITIES)
+- May be:
+  - Characters (use verbatim names with angle brackets)
+  - Objects (nouns, physical or abstract)
+- Copy entity names **verbatim**
+- Use `null` if no source exists
+- Do **not** invent entities
 
-6. PRONOUNS
-- NEVER use pronouns ("her", "his", "their").
-- Replace with explicit character/object names.
+2. CONTENT (VERBS / RELATIONS)
+- Use **simple present tense** only  
+  Examples: walks, puts, looks at
+- Avoid progressive or continuous forms  
+  is walking → walks
+- Include relevant prepositions or direction
+  - turns left
+  - looks at
+  - moves forward
+- Include adverbs when present
+  - runs quickly
+  - smiles happily
+
+3. BODY PART MERGING
+- Merge body parts into the verb
+- Do NOT create body-part objects
+Examples:
+- "<Alice> hits <Bob>'s head" → ["<Alice>", "hits head", "<Bob>"]
+- "<Emma> touches <David>'s shoulder" → ["<Emma>", "touches shoulder", "<David>"]
+
+4. COMMUNICATION ACTIONS
+- Encode communication directly
+- Do NOT create abstract objects (e.g., "question", "message")
+Examples:
+- "<Tom> asks <Mary>" → ["<Tom>", "asks", "<Mary>"]
+- "<Lisa> greets <John>" → ["<Lisa>", "greets", "<John>"]
+
+5. OBJECT HANDLING
+- Objects are nouns
+- Singularize plurals  
+  books → book
+- Keep adjectives attached to the object  
+  eg. "red cup"
+- Keep named objects verbatim  
+  eg. "bottle of Nescafe"
+- Split compound objects into separate triples
+  eg. "<Alice> picks up the book and the pen" → ["<Alice>", "picks up", "book"], ["<Alice>", "picks up", "pen"]
+
+6. PRONOUN & POSSESSIVE RESOLUTION
+- NEVER use pronouns (his, her, their)
+- Replace possessives with explicit ownership:
+  - his wallet → John's wallet
+- Default ownership to the **nearest subject** if ambiguous
 
 7. MULTIPLE RELATIONS
-- Split sentences with multiple subjects, contents (verbs), or objects into separate triples.
-- **Multiple subjects**: Each subject gets its own triple with the same content and object.
-  Example: "<Alice> and <Bob> exit" →
-    ["<Alice>", "exit", null],
-    ["<Bob>", "exit", null]
-- **Multiple contents (verbs)**: Each verb gets its own triple with the same subject and object.
-  Example: "<Alice> walks and talks" →
-    ["<Alice>", "walks", null],
-    ["<Alice>", "talks", null]
-- **Multiple objects**: Each object gets its own triple with the same subject and content.
-  Example: "<Alice> picks up the book and the pen" →
-    ["<Alice>", "picks up", "book"],
-    ["<Alice>", "picks up", "pen"]
+- Multiple subjects: Each subject gets its own triple
+  eg. "<Alice> and <Bob> exit" → ["<Alice>", "exit", null], ["<Bob>", "exit", null]
+- Multiple verbs: Each verb becomes a separate triple
+  eg. "<Lisa> dances and sings" → ["<Lisa>", "dances", null], ["<Lisa>", "sings", null]
+- Multiple objects: Each object becomes a separate triple
 
-8. DEDUPLICATION
-- Keep only distinct, meaningful actions.
-- Avoid redundant states implied by stronger actions.
+8. STATE REPRESENTATION
+- If an action implies a **resulting state**, add a state triple.
+  eg. "<robot> puts coffee on table" → ["<robot>", "puts", "coffee"], ["coffee", "is on", "table"]
 
-9. STATE REPRESENTATION
-- Allowed with object as subject:
-  - "<robot> puts coffee on table" →
-    ["<robot>", "puts", "coffee"],
-    ["coffee", "is on", "table"]
+9. DEDUPLICATION
+- Keep only **distinct, meaningful** actions
+- Do NOT duplicate states already implied by a stronger action
+- Redistribution of information across triples is allowed
 
-10. FALLBACK
-- If unsure, default to minimally transformed [target, content, source].
+10. FALLBACK RULE
+If unsure, output a **minimal transformation**:
+[target, verb, source]
 
-### EXAMPLE
-
+## EXAMPLE: 
 Input:
 [
   "<Michael> pats <Susan>'s shoulder and smiles.",
   "<robot> places the red cup on the counter.",
-  "<Tom> asks <Mary> about the meeting.",
-  "<Lisa> dances and sings.",
+  "<Lisa> dances and sings happily.",
   "<John> takes his wallet and keys from the drawer."
 ]
+
 Output:
 [
   ["<Michael>", "pats shoulder", "<Susan>"],
   ["<Michael>", "smiles", null],
-  ["<robot>", "places", "cup#red"],
-  ["cup#red", "is on", "counter"],
-  ["<Tom>", "asks", "<Mary>"],
-  ["<Lisa>", "dances", null],
-  ["<Lisa>", "sings", null],
-  ["<John>", "takes", "wallet@<John>"],
-  ["<John>", "takes", "keys@<John>"]
+  ["<robot>", "places", "red cup"],
+  ["red cup", "is on", "counter"],
+  ["<Lisa>", "dances happily", null],
+  ["<Lisa>", "sings happily", null],
+  ["<John>", "takes", "John's wallet"],
+  ["<John>", "takes", "John's key"]
 ]
 
-Now convert the following lines into triples:
+Now convert the following list of action sentences into triples:
 """
 
 
@@ -335,7 +369,7 @@ Now summarize the following conversation:
 
 
 #--------------------------------
-# Search Prompts
+# Reasoning Prompts
 #--------------------------------
 
 prompt_parse_query = """
@@ -343,12 +377,12 @@ You are a query parser for a knowledge graph system that stores video informatio
 
 ## GRAPH STRUCTURE
 
-**HIGH-LEVEL EDGES (clip_id=0)**: Character attributes/relationships
+**HIGH-LEVEL EDGES**: Character attributes/relationships
 - Format: `["<Alice>", "confident", null]` or `["<Alice>", "is friend with", "<Bob>"]`
 - **Limited quantity** (<10 per query) - allocate 5-10 max when needed, fewer otherwise
 - Use for: character traits, relationships, "who is" queries
 
-**LOW-LEVEL EDGES (clip_id>0)**: Specific actions/states with scene info
+**LOW-LEVEL EDGES**: Specific actions/states with scene info
 - Format: `["<Alice>", "picks up", "coffee"]` or `["coffee", "is on", "table"]`
 - Most abundant source - allocate 30-45 for action-focused queries
 - Use for: specific actions, temporal/spatial queries ("what did X do", "where is X")
@@ -506,7 +540,9 @@ If the action is [Search]:
 - **Content**: Provide a list of video clip IDs (as integers) ranked by relevance: [clip_id1, clip_id2, ...]
 - **Summary**: Provide a concise summary of extracted graph information relevant to the question, including key events, character information, conversations, and temporal/spatial context.
 
-If the action is [Answer], do not include a Summary field.
+If the action is [Answer]:
+- **Content**: Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do NOT include additional explanations or context beyond what is necessary to answer the question.
+- Do not include a Summary field.
 
 Examples:
 
@@ -514,7 +550,7 @@ Question: What is the relationship between Anna and Susan?
 Extracted information: High-level: Anna competes with Susan (85). Anna is competitive (90). Susan is competitive (88). Low-level: [12] Anna challenges Susan to a game. [15] Anna and Susan prepare for competition. Conversations: Conversation 1: Anna and Susan discuss their upcoming game, with Anna expressing confidence in winning.
 Output:
 Action: [Answer]
-Content: Anna and Susan are competitors. Both are competitive individuals, and Anna has challenged Susan to a game.
+Content: Anna and Susan are competitors.
 
 Question: What did Anna decide to drink before the game?
 Extracted information: High-level: Anna is health-conscious (80). Anna prefers water (85). Low-level: [15] Anna picks up Anna's water bottle. [16] Susan picks up Susan's sports drink. Conversations: Conversation 2: Anna says "I just want a bottle of water. That's fine. No sports soda for me." Susan responds "you never drink sports soda, and just mineral water."
@@ -526,7 +562,7 @@ Question: Where did Anna and Susan have their conversation about the game?
 Extracted information: High-level: (no location attributes found) Low-level: [10] Anna walks to ping-pong room. [12] Anna and Susan stand in ping-pong room. Conversations: Conversation 1: Anna and Susan discuss their upcoming game. [Clip 12]
 Output:
 Action: [Answer]
-Content: Anna and Susan had their conversation about the game in the ping-pong room.
+Content: In the ping-pong room.
 
 Question: What was the exact expression on Anna's face when she received the gift?
 Extracted information: High-level: (no facial expression information) Low-level: [15] Bob gives Anna wrapped gift box. [16] Anna unwraps gift box. Conversations: (no relevant conversations)
@@ -570,7 +606,7 @@ Output format:
 Action: [Answer] or [Search]
 Content: <your answer here> or <summary of what the video shows>
 
-- If Action is [Answer]: Provide a clear, direct answer to the question based on the current video and/or previous summaries
+- If Action is [Answer]: Provide a concise, direct answer in ONE SENTENCE based on the current video and/or previous summaries. Be brief and to the point. Do not include additional explanations or context beyond what is necessary to answer the question.
 - If Action is [Search]: Provide a summary describing what the current video shows. This summary will be passed to the next video clip. Focus on key events, characters, objects, or actions that might be relevant for answering the question
 
 Examples:
@@ -594,7 +630,7 @@ Previous summaries: Clip 1: Bob gives Alice a wrapped gift box. Clip 2: Alice un
 Video shows: Alice reading the book and thanking Bob
 Output:
 Action: [Answer]
-Content: After receiving the gift, Alice read the book and thanked Bob.
+Content: Alice read the book and thanked Bob.
 
 Question: What is Bob holding?
 Previous summaries: None (first clip)
@@ -617,5 +653,31 @@ You are given a 30-second video represented as sequential frames (pictures in ch
 
 Your task is to answer the question based on the video and the previous video summaries. If the given information is insufficient or missing critical details, you can make reasonable guess. 
 
+**Important**: Provide a concise answer in ONE SENTENCE. Be brief and to the point.
+
 Only output the answer, with no additional explanation.
 """
+
+
+prompt_agent_verify_answer_referencing = """You are provided with a question, a ground truth answer, and an answer from an agent model. Your task is to determine whether the ground truth answer can be logically inferred from the agent's answer, in the context of the question.
+
+Do not directly compare the surface forms of the agent answer and the ground truth answer. Instead, assess whether the meaning expressed by the agent answer supports or implies the ground truth answer. If the ground truth can be reasonably derived from the agent answer, return "Yes". If it cannot, return "No".
+
+Important notes:
+	•	Do not require exact wording or matching structure.
+	•	Semantic inference is sufficient, as long as the agent answer entails or implies the meaning of the ground truth answer, given the question.
+	•	Only return "Yes" or "No", with no additional explanation or formatting.
+
+Input fields:
+	•	question: the question asked
+	•	ground_truth_answer: the correct answer
+	•	agent_answer: the model's answer to be evaluated
+
+Now evaluate the following input:
+
+Input:
+	•	question: {question}
+	•	ground_truth_answer: {ground_truth_answer}
+	•	agent_answer: {agent_answer}
+
+Output ('Yes' or 'No'):"""

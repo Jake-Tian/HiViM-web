@@ -44,6 +44,8 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
     previous_conversation = False
     episodic_memory = dict()
     graph = HeteroGraph()
+    # Track final character appearance across all clips
+    final_character_appearance = {}
     
     for folder in image_folders:
         try:
@@ -86,13 +88,10 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
 
             # 2. Process the character appearance
             character_appearance = response_dict.get("character_appearance", {})
-            if isinstance(character_appearance, dict):
-                for character in character_appearance:
-                    if character not in graph.characters:
-                        graph.add_character(character)
-            else:
+            if not isinstance(character_appearance, dict):
                 print(f"Warning: character_appearance is not a dictionary, got {type(character_appearance)}")
                 character_appearance = {}
+            final_character_appearance.update(character_appearance)
 
             # 3. Process the conversation
             conversation = response_dict.get("conversation", [])
@@ -125,19 +124,19 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             # Ensure behaviors is a list of strings for join operation
             if behaviors:
                 behavior_prompt = prompt_extract_triples + "\n" + "\n".join(str(b) for b in behaviors)
-            else:
-                behavior_prompt = prompt_extract_triples
-            try:
-                triples_response = generate_text_response(behavior_prompt)
-            except Exception as e:
-                print(f"LLM call failed, retrying... Error: {e}")
-                triples_response = generate_text_response(behavior_prompt)
-
-            triples_response = strip_code_fences(triples_response)
-            triples = json.loads(triples_response)
-            graph.insert_triples(triples, clip_id, scene)
+                try:
+                    triples_response = generate_text_response(behavior_prompt)
+                except Exception as e:
+                    print(f"LLM call failed, retrying... Error: {e}")
+                    triples_response = generate_text_response(behavior_prompt)
+                triples_response = strip_code_fences(triples_response)
+                triples = json.loads(triples_response)
+            else: 
+                triples = []
+            # Pass character_appearance to insert_triples for matching and merging
+            graph.insert_triples(triples, clip_id, scene, character_appearance=character_appearance)
             print(f"Inserted {len(triples)} triples into graph for clip {clip_id}")
-
+            
             character_appearance = json.dumps(character_appearance)
 
             # Store episodic memory for this clip
@@ -167,9 +166,23 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             import traceback
             traceback.print_exc()
 
-    # Insert edge embeddings
-    graph.edge_embedding_insertion()
+    # Insert character appearances as high-level edges
+    if final_character_appearance:
+        try:
+            graph.insert_character_appearances(final_character_appearance)
+        except Exception as e:
+            print(f"✗ Error inserting character appearances: {e}")
+            import traceback
+            traceback.print_exc()
 
+    try: 
+        graph.node_embedding_insertion()
+        graph.edge_embedding_insertion()
+    except Exception as e:
+        print(f"✗ Error inserting embeddings: {e}")
+        import traceback
+        traceback.print_exc()
+    
     # --------------------------------
     # Abstract Memory
     # --------------------------------
@@ -239,7 +252,7 @@ def main():
     else:
         selected = video_names
     
-    selected = ["gym_01"] # Comment this out to process all videos
+    selected = ["living_room_04"] # Comment this out to process all videos
 
     for video_name in selected:
         try:

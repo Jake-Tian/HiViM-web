@@ -1,61 +1,36 @@
+# python -m utils.search
+
 import json
 import pickle
 from pathlib import Path
 from classes.hetero_graph import HeteroGraph
-from utils.llm import generate_text_response
-from utils.prompts import prompt_parse_query
 from utils.general import strip_code_fences
-from utils.edge_transfer import high_level_edges_to_string, low_level_edge_to_string
+from utils.reasoning.edge_to_string import high_level_edges_to_string, low_level_edge_to_string
 
 
-def load_graph(graph_path):
+def search_with_parse(query, graph, parse_query_response):
     """
-    Load a HeteroGraph from a pickle file.
-    
-    Args:
-        graph_path: Path to the graph pickle file
-    
-    Returns:
-        HeteroGraph: The loaded graph object
-    """
-    graph_path = Path(graph_path)
-    if not graph_path.exists():
-        raise FileNotFoundError(f"Graph file not found: {graph_path}")
-    
-    with open(graph_path, "rb") as f:
-        graph = pickle.load(f)
-    
-    return graph
-
-
-def search(query, graph):
-    """
-    Search the graph for information relevant to a query and return a formatted string.
+    Search the graph and return search results based on a parsed query.
     
     This function:
-    1. Parses the query using LLM
+    1. Parses the parse_query_response to extract search strategy
     2. Searches high-level edges, low-level edges, and conversations
     3. Formats all results into a single natural language string
+    4. Returns the formatted search results
     
     Args:
-        query: Natural language query string
+        query: Natural language query string (used for conversation search)
         graph: HeteroGraph instance to search
+        parse_query_response: Raw output from prompt_parse_query (JSON string)
     
     Returns:
         str: Formatted string containing all search results in natural language
     """
-    
-    # Parse query using LLM
-    try:
-        strategy = generate_text_response(prompt_parse_query + "\n" + query)
-    except Exception as e:
-        raise Exception(f"Error generating query strategy: {e}")
-
     # Transfer the strategy into dictionary
     try:
-        strategy_dict = json.loads(strip_code_fences(strategy))
+        strategy_dict = json.loads(strip_code_fences(parse_query_response))
     except json.JSONDecodeError as e:
-        raise Exception(f"Error parsing strategy JSON: {e}\nRaw strategy response: {strategy}")
+        raise Exception(f"Error parsing strategy JSON: {e}\nRaw strategy response: {parse_query_response}")
 
     # Extract strategy components with safe access
     triple = strategy_dict.get("query_triple")
@@ -120,25 +95,30 @@ def search(query, graph):
             result_sections.append(conversation_str)
     
     # Combine all sections
-    final_result = "\n".join(result_sections)
+    graph_search_results = "\n".join(result_sections)
     
     # If no results found, return a message
-    if not final_result.strip():
-        return "No relevant information found for this query."
+    if not graph_search_results.strip():
+        graph_search_results = "No relevant information found for this query."
     
-    return final_result
+    return graph_search_results
 
 
 if __name__ == "__main__":
     # Example usage
+    from utils.llm import generate_text_response
+    from utils.prompts import prompt_parse_query
+    
     with open("data/semantic_memory/gym_01.pkl", "rb") as f:
         graph = pickle.load(f)
     query = "Which takeout should be taken to Anna?"
     
     try:
-        result = search(query, graph)
+        parse_query_response = generate_text_response(prompt_parse_query + "\n" + query)
+        result = search_with_parse(query, graph, parse_query_response)
         print(result)
     except Exception as e:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+        

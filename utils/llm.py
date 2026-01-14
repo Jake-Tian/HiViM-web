@@ -9,7 +9,10 @@ def generate_text_response(prompt):
             {"role": "user", "content": prompt}
         ]
     )
-    return response.choices[0].message.content
+    content = response.choices[0].message.content
+    if content is None:
+        raise ValueError("OpenAI API returned None content. The response may have been filtered or empty.")
+    return content
 
 def get_embedding(text):
     client = OpenAI()

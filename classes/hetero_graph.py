@@ -1,4 +1,5 @@
 import json
+import re
 import numpy as np
 from .node_class import CharacterNode, ObjectNode
 from .edge_class import Edge
@@ -13,7 +14,7 @@ class HeteroGraph:
     def __init__(self):
 
         self.characters = {}   # name → CharacterNode object
-        self.objects = {}   # (name, owner, attribute) → ObjectNode object (tuple key)
+        self.objects = {}   # name → ObjectNode object
         self.conversations = {}   # id → Conversation object
         self.edges = {}   # id → Edge object
         self.current_conversation_id = None  # Track the most recent conversation ID
@@ -30,7 +31,14 @@ class HeteroGraph:
     # Node API
     # --------------------------------------------------------
     def add_character(self, name):
-        """Add a new character."""
+        # Ensure name has angle brackets
+        if not name.startswith("<") or not name.endswith(">"):
+            name = f"<{name}>"
+        
+        # For other characters, check if already exists
+        if name in self.characters:
+            return name
+        
         character = CharacterNode(name)
         self.characters[character.name] = character
         return character.name
@@ -45,9 +53,8 @@ class HeteroGraph:
         
         This function:
         1. Updates the character's name in self.characters
-        2. Updates all object nodes whose ownership references this character
-        3. Updates all edges where this character appears as source or target
-        4. Updates adjacency lists accordingly
+        2. Updates all edges where this character appears as source or target
+        3. Updates adjacency lists accordingly
         
         Args:
             old_name: Current character name in format <character_X> (e.g., "<character_1>")
@@ -55,16 +62,11 @@ class HeteroGraph:
                      Will be stored in graph as "<Alice>"
         
         Returns:
-            bool: True if rename was successful, False if old_name not found or new_name already exists
+            bool: True if rename was successful, False if old_name not found, not in <character_X> format, or new_name already exists
         """
-        # Ensure old_name has angle brackets and matches <character_X> format
+        # Ensure old_name has angle brackets
         if not old_name.startswith("<") or not old_name.endswith(">"):
             old_name = f"<{old_name}>"
-        
-        # Validate old_name is in <character_X> format
-        if not old_name.startswith("<character_") or not old_name.endswith(">"):
-            # Allow it but warn - the user should pass <character_X> format
-            pass
         
         # Remove angle brackets from new_name if present, then add them for storage
         new_name_plain = new_name.strip("<>")
@@ -73,6 +75,11 @@ class HeteroGraph:
         # Check if old character exists
         if old_name not in self.characters:
             return False
+        
+        # Validate that old_name is in <character_X> format
+        # Check if old_name matches <character_X> pattern where X is a number
+        if not re.match(r'^<character_\d+>$', old_name):
+            return False  # Only <character_X> format can be renamed
         
         # Check if new name already exists (and it's not the same character)
         if new_name_stored in self.characters and new_name_stored != old_name:
@@ -88,23 +95,7 @@ class HeteroGraph:
         del self.characters[old_name]
         self.characters[new_name_stored] = character
         
-        # 3. Update object nodes that have this character as owner
-        objects_to_update = []
-        for obj_key, obj_node in list(self.objects.items()):
-            name, owner, attribute = obj_key
-            if owner == old_name:
-                # Create new key with updated owner
-                new_key = (name, new_name_stored, attribute)
-                objects_to_update.append((obj_key, new_key, obj_node))
-        
-        # Update object dictionary keys
-        for old_key, new_key, obj_node in objects_to_update:
-            del self.objects[old_key]
-            self.objects[new_key] = obj_node
-            # Update the node's owner attribute
-            obj_node.owner = new_name_stored
-        
-        # 4. Update edges where this character appears as source or target
+        # 3. Update edges where this character appears as source or target
         # Collect all edges connected to this character
         all_edge_ids = set(self.adjacency_list_out.get(old_name, [])) | set(self.adjacency_list_in.get(old_name, []))
         
@@ -120,7 +111,7 @@ class HeteroGraph:
             if edge.target == old_name:
                 edge.target = new_name_stored
         
-        # 5. Update adjacency lists
+        # 4. Update adjacency lists
         # Move edge IDs from old_name to new_name_stored in both adjacency lists
         if old_name in self.adjacency_list_out:
             edge_ids_out = self.adjacency_list_out.pop(old_name)
@@ -131,24 +122,6 @@ class HeteroGraph:
             self.adjacency_list_in[new_name_stored] = edge_ids_in
         
         return True
-    
-    def get_neighbors(self, name):
-        """
-        Get all neighbors of a node (both incoming and outgoing).
-        """
-        result = set()
-        
-        # Check outgoing edges (where node is source)
-        for eid in self.adjacency_list_out[name]:
-            e = self.edges[eid]
-            result.add(e.target)
-        
-        # Check incoming edges (where node is target)
-        for eid in self.adjacency_list_in[name]:
-            e = self.edges[eid]
-            result.add(e.source)
-        
-        return result
     
     def get_node_degrees(self):
         """
@@ -169,10 +142,11 @@ class HeteroGraph:
 
     def _parse_node_string(self, node_str):
         """
-        Parse a node string to determine if it's a character or object, and extract owner/attribute.
+        Parse a node string to determine if it's a character or object.
+        Returns: (is_character, name)
         """
         if node_str is None:
-            return (False, None, None, None)
+            return (False, None)
         
         node_str = str(node_str).strip()
         
@@ -180,203 +154,37 @@ class HeteroGraph:
         if node_str.startswith("<") and node_str.endswith(">"):
             # Keep the angle brackets for consistency with storage
             character_name = node_str  # Keep angle brackets
-            return (True, character_name, None, None)
+            return (True, character_name)
         
-        # It's an object node - parse owner and attribute
-        # Format can be: "object", "object@owner", "object#attribute", "object@owner#attribute", "object#attribute@owner"
-        owner = None
-        attribute = None
-        name = node_str
-        
-        # Handle different formats
-        # Priority: @ comes before # in parsing (owner is more specific)
-        if "@" in node_str and "#" in node_str:
-            # Both @ and # exist - determine order
-            at_pos = node_str.find("@")
-            hash_pos = node_str.find("#")
-            
-            if at_pos < hash_pos:
-                # Format: "object@owner#attribute"
-                parts = node_str.split("@", 1)
-                name = parts[0]
-                rest = parts[1]
-                if "#" in rest:
-                    owner_part, attribute = rest.split("#", 1)
-                    owner = owner_part
-                else:
-                    owner = rest
-            else:
-                # Format: "object#attribute@owner"
-                parts = node_str.split("#", 1)
-                name = parts[0]
-                rest = parts[1]
-                if "@" in rest:
-                    attribute_part, owner = rest.split("@", 1)
-                    attribute = attribute_part
-                else:
-                    attribute = rest
-        elif "@" in node_str:
-            # Only @ exists: "object@owner"
-            parts = node_str.split("@", 1)
-            name = parts[0]
-            owner = parts[1]
-        elif "#" in node_str:
-            # Only # exists: "object#attribute"
-            parts = node_str.split("#", 1)
-            name = parts[0]
-            attribute = parts[1]
-        
-        # Keep owner as-is: if it has angle brackets, it's a character reference; otherwise it's not
-        
-        return (False, name, owner, attribute)
-    
-    def _object_key_to_string(self, key):
-        """
-        Convert tuple key to string representation for edges.
-        """
-        name, owner, attribute = key
-        # Owner should already have angle brackets if it's a character reference (from parsing)
-        if owner and attribute:
-            return f"{name}@{owner}#{attribute}"
-        elif owner:
-            return f"{name}@{owner}"
-        elif attribute:
-            return f"{name}#{attribute}"
-        else:
-            return name
-    
-    def _string_to_object_key(self, node_str):
-        """
-        Parse a node string and return tuple key for object nodes.
-        """
-        is_char, name, owner, attribute = self._parse_node_string(node_str)
-        if is_char:
-            return None  # Characters don't use tuple keys
-        return (name, owner, attribute)
-    
-    def _get_object_node_by_key(self, key):
-        """
-        Get an object node by tuple key.
-        """
-        return self.objects.get(key)
+        # It's an object node - just return the name as-is
+        return (False, node_str)
     
     def get_object_node(self, node_str):
         """
         Get an object node by its string representation.
         For character nodes, returns None (use get_character instead).
         """
-        obj_key = self._string_to_object_key(node_str)
-        if obj_key is None:
+        is_char, name = self._parse_node_string(node_str)
+        if is_char:
             return None  # It's a character node
-        return self.objects.get(obj_key)
+        return self.objects.get(name)
     
-    def _get_or_create_object_node(self, name, owner=None, attribute=None):
+    def _get_or_create_object_node(self, name):
         """
         Get an existing object node or create a new one.
-        Uniqueness is determined by name + owner + attribute combination (tuple key).
+        Uniqueness is determined by name only.
+        Returns: (node_name, node_name) for consistency with existing code
         """
-        # Create tuple key for uniqueness
-        tuple_key = (name, owner, attribute)
-        
         # Check if object already exists
-        if tuple_key in self.objects:
-            string_repr = self._object_key_to_string(tuple_key)
-            return (tuple_key, string_repr)
+        if name in self.objects:
+            return (name, name)
         
         # Create new object node
-        obj_node = ObjectNode(name, owner=owner, attribute=attribute)
-        self.objects[tuple_key] = obj_node
+        obj_node = ObjectNode(name)
+        self.objects[name] = obj_node
         
-        # Return both tuple key and string representation
-        string_repr = self._object_key_to_string(tuple_key)
-        return (tuple_key, string_repr)
-    
-    def insert_triples(self, triples, clip_id, scene):
-        """
-        Insert triples into the graph.
-        
-        Args:
-            triples: List of triples, each triple is [source, edge_content, target]
-            clip_id: ID of the clip these triples belong to
-        
-        Rules:
-        1. Each triple: [source, edge_content, target]
-        2. Elements with angle brackets <> are character nodes, otherwise object nodes
-        3. Object nodes can have @owner and/or #attribute suffixes
-        4. Character nodes should already exist; object nodes are created if needed
-        5. Uniqueness of object nodes is determined by name + owner + attribute
-        6. Don't insert duplicate edges in the same list
-        """
-        if not triples:
-            return
-        
-        # Track inserted edges to avoid duplicates within the same list
-        # Use (source, target, content) as the key
-        seen_edges = set()
-        
-        for triple in triples:
-            if not isinstance(triple, list) or len(triple) < 3:
-                continue
-            
-            source_str = triple[0]
-            edge_content = triple[1]
-            target_str = triple[2]
-            
-            # Skip if source is None
-            if source_str is None:
-                continue
-            
-            # Skip if edge content is None/null or empty
-            if edge_content is None or (isinstance(edge_content, str) and not edge_content.strip()):
-                continue
-            
-            # Parse source node
-            is_char_src, src_name, src_owner, src_attr = self._parse_node_string(source_str)
-            
-            if is_char_src:
-                # Source is a character - verify it exists (characters are stored with angle brackets)
-                # src_name already has angle brackets from _parse_node_string
-                if src_name not in self.characters:
-                    print(f"Warning: Character node '{src_name}' not found in graph, skipping triple: {triple}")
-                    continue
-                source_node_name = src_name
-            else:
-                # Source is an object - get or create (returns tuple_key, string_repr)
-                _, source_node_name = self._get_or_create_object_node(src_name, owner=src_owner, attribute=src_attr)
-            
-            # Handle null/Null target - use None as target but don't create object node
-            if target_str is None or (isinstance(target_str, str) and target_str.lower() == "null"):
-                target_node_name = None
-            else:
-                # Parse target node
-                is_char_tgt, tgt_name, tgt_owner, tgt_attr = self._parse_node_string(target_str)
-                
-                if is_char_tgt:
-                    # Target is a character - verify it exists (characters are stored with angle brackets)
-                    # tgt_name already has angle brackets from _parse_node_string
-                    if tgt_name not in self.characters:
-                        print(f"Warning: Character node '{tgt_name}' not found in graph, skipping triple: {triple}")
-                        continue
-                    target_node_name = tgt_name
-                else:
-                    # Target is an object - get or create (returns tuple_key, string_repr)
-                    _, target_node_name = self._get_or_create_object_node(tgt_name, owner=tgt_owner, attribute=tgt_attr)
-            
-            # Check for duplicate edge
-            edge_key = (source_node_name, target_node_name, edge_content)
-            if edge_key in seen_edges:
-                continue  # Skip duplicate
-            
-            seen_edges.add(edge_key)
-            
-            # Create and add edge
-            edge = Edge(clip_id=clip_id, source=source_node_name, target=target_node_name, content=edge_content, scene=scene)
-            try:
-                self.add_edge(edge)
-            except ValueError as e:
-                print(f"Warning: {e}, skipping triple: {triple}")
-                continue
-    
+        return (name, name)
+
 
     # --------------------------------------------------------
     # Conversation API
@@ -409,7 +217,6 @@ class HeteroGraph:
         
         if not previous_conversation:
             # Create new conversation - convert messages to 4-element format first
-            from utils.llm import get_embedding
             formatted_messages = []
             for msg in messages:
                 if isinstance(msg, list) and len(msg) >= 2:
@@ -438,11 +245,45 @@ class HeteroGraph:
     # --------------------------------------------------------
     # Edge API
     # --------------------------------------------------------
+    def _find_existing_high_level_edge(self, source, content, target, clip_id=0):
+        """
+        Find an existing high-level edge that matches the given parameters exactly.
+        Note: "Anna friends with Susan" and "Susan friends with Anna" are treated as different edges.
+        
+        Args:
+            source: Source node name
+            content: Edge content (attribute or relationship)
+            target: Target node name (None for attributes)
+            clip_id: Clip ID (should be 0 for high-level edges)
+        
+        Returns:
+            Edge object if found, None otherwise
+        """
+        # Only check high-level edges (clip_id=0, scene=None)
+        for edge_id, edge in self.edges.items():
+            if edge.clip_id != clip_id or edge.scene is not None:
+                continue
+            
+            # Check if content matches
+            if edge.content != content:
+                continue
+            
+            # For attributes (target is None)
+            if target is None:
+                if edge.source == source and edge.target is None:
+                    return edge
+            # For relationships (target is not None) - only check exact match
+            else:
+                if edge.source == source and edge.target == target:
+                    return edge
+        
+        return None
+    
     def add_edge(self, edge):
         # Check if source and target nodes exist
         # Edges store node names as strings, so we need to check:
         # - For characters: direct lookup in self.characters (with angle brackets)
-        # - For objects: parse the string and check tuple key in self.objects
+        # - For objects: direct lookup in self.objects by name
         
         source_exists = False
         # If source has angle brackets, it's a character; otherwise it's an object
@@ -451,9 +292,8 @@ class HeteroGraph:
             if edge.source in self.characters:
                 source_exists = True
         else:
-            # It's an object - parse and check tuple key
-            obj_key = self._string_to_object_key(edge.source)
-            if obj_key is not None and obj_key in self.objects:
+            # It's an object - check by name
+            if edge.source in self.objects:
                 source_exists = True
         
         target_exists = False
@@ -466,9 +306,8 @@ class HeteroGraph:
             if edge.target in self.characters:
                 target_exists = True
         else:
-            # It's an object - parse and check tuple key
-            obj_key = self._string_to_object_key(edge.target)
-            if obj_key is not None and obj_key in self.objects:
+            # It's an object - check by name
+            if edge.target in self.objects:
                 target_exists = True
         
         if not source_exists:
@@ -486,15 +325,219 @@ class HeteroGraph:
             self.adjacency_list_in[None].append(edge.id)
 
         return edge.id
+    
+    def add_high_level_edge(self, edge):
+        """
+        Add a high-level edge (clip_id=0) with duplicate checking.
+        If a duplicate exists, updates confidence score if new one is higher.
+        
+        Args:
+            edge: Edge object to add (must have clip_id=0)
+        
+        Returns:
+            edge.id if added/updated, None if skipped
+        """
+        # Only process high-level edges
+        if edge.clip_id != 0:
+            # For non-high-level edges, use regular add_edge
+            return self.add_edge(edge)
+        
+        # Check if edge already exists
+        existing_edge = self._find_existing_high_level_edge(
+            source=edge.source,
+            content=edge.content,
+            target=edge.target,
+            clip_id=edge.clip_id
+        )
+        
+        if existing_edge:
+            # Edge already exists - update confidence if new one is higher
+            new_confidence = getattr(edge, 'confidence', None)
+            old_confidence = getattr(existing_edge, 'confidence', None)
+            
+            if new_confidence is not None and (old_confidence is None or new_confidence > old_confidence):
+                existing_edge.confidence = new_confidence
+                return existing_edge.id
+            else:
+                # Skip adding duplicate with lower or equal confidence
+                return None
+        else:
+            # New edge - add it normally
+            return self.add_edge(edge)
 
-    def get_edge(self, edge_id):
-        return self.edges.get(edge_id)
-
-    def edges_from(self, node_id):
-        return set(self.adjacency_list_out[node_id])
-
-    def edges_to(self, node_id):
-        return set(self.adjacency_list_in[node_id])
+    def _match_and_merge_character(self, char_name, character_appearance, similarity_threshold=0.85):
+        """
+        Match a new character with existing characters based on appearance similarity.
+        If a match is found with a <character_X> (not named character), merge them.
+        
+        Args:
+            char_name: Character name to match (e.g., "<character_3>")
+            character_appearance: Dictionary mapping character names to appearance descriptions
+            similarity_threshold: Minimum similarity to consider a match (default: 0.85)
+        
+        Returns:
+            str: The character name to use (either original or merged name), or None if no match
+        """
+        if not character_appearance or char_name not in character_appearance:
+            return None
+        
+        new_appearance = character_appearance[char_name]
+        
+        # Get embedding for the new character's appearance
+        try:
+            new_appearance_emb = get_embedding(new_appearance)
+        except Exception as e:
+            print(f"Warning: Failed to get embedding for character appearance: {e}")
+            return None
+        
+        # Compare with all existing characters (only <character_X> can be removed)
+        best_match = None
+        best_similarity = 0.0
+        
+        for existing_char_name in self.characters:
+            # Only consider <character_X> for removal (not named characters, not robot)
+            if not existing_char_name.startswith("<character_") or existing_char_name == "<robot>":
+                continue
+            
+            # Get appearance for existing character
+            if existing_char_name in character_appearance:
+                existing_appearance = character_appearance[existing_char_name]
+                try:
+                    existing_appearance_emb = get_embedding(existing_appearance)
+                    sim = self._cosine_similarity(new_appearance_emb, existing_appearance_emb)
+                    if sim > best_similarity and sim >= similarity_threshold:
+                        best_similarity = sim
+                        best_match = existing_char_name
+                except Exception as e:
+                    continue
+        
+        # If match found, merge the characters
+        if best_match:
+            # Remove angle brackets for rename_character
+            old_name_plain = best_match.strip("<>")
+            new_name_plain = char_name.strip("<>")
+            
+            # Rename the existing character to the new name
+            if self.rename_character(old_name_plain, new_name_plain):
+                # Remove the matched character from character_appearance
+                if best_match in character_appearance:
+                    del character_appearance[best_match]
+                print(f"Matched and merged character: {best_match} -> {char_name} (similarity: {best_similarity:.3f})")
+                return char_name
+        
+        return None
+    
+    def insert_triples(self, triples, clip_id, scene, character_appearance=None):
+        """
+        Insert triples into the graph.
+        
+        Args:
+            triples: List of triples, each triple is [source, edge_content, target]
+            clip_id: ID of the clip these triples belong to
+            scene: Scene name for these triples
+            character_appearance: Dictionary mapping character names to appearance descriptions.
+                                 Used to match and merge duplicate characters. Will be modified in-place
+                                 if characters are merged.
+        
+        Rules:
+        1. Each triple: [source, edge_content, target]
+        2. Elements with angle brackets <> are character nodes, otherwise object nodes
+        3. Character nodes are created when first encountered in triples
+        4. If character doesn't exist, compare appearance with existing characters
+        5. If appearance matches a <character_X> (not named character), remove that character and use its name
+        6. Uniqueness of object nodes is determined by name only
+        7. Don't insert duplicate edges in the same list
+        """
+        if not triples:
+            return
+        
+        # Parse character_appearance if it's a JSON string
+        if isinstance(character_appearance, str):
+            try:
+                character_appearance = json.loads(character_appearance)
+            except:
+                character_appearance = {}
+        
+        # Track inserted edges to avoid duplicates within the same list
+        # Use (source, target, content) as the key
+        seen_edges = set()
+        
+        for triple in triples:
+            if not isinstance(triple, list) or len(triple) < 3:
+                continue
+            
+            source_str = triple[0]
+            edge_content = triple[1]
+            target_str = triple[2]
+            
+            # Skip if source is None
+            if source_str is None:
+                continue
+            
+            # Skip if edge content is None/null or empty
+            if edge_content is None or (isinstance(edge_content, str) and not edge_content.strip()):
+                continue
+            
+            # Parse source node
+            is_char_src, src_name = self._parse_node_string(source_str)
+            
+            if is_char_src:
+                # Source is a character - create if doesn't exist, or match and merge
+                if src_name not in self.characters:
+                    # Try to match with existing characters
+                    matched_name = self._match_and_merge_character(src_name, character_appearance)
+                    if matched_name:
+                        # Use the matched name (which is the same as src_name after merge)
+                        source_node_name = src_name
+                    else:
+                        # No match found, create new character
+                        self.add_character(src_name)
+                        source_node_name = src_name
+                else:
+                    source_node_name = src_name
+            else:
+                # Source is an object - get or create
+                _, source_node_name = self._get_or_create_object_node(src_name)
+            
+            # Handle null/Null target - use None as target but don't create object node
+            if target_str is None or (isinstance(target_str, str) and target_str.lower() == "null"):
+                target_node_name = None
+            else:
+                # Parse target node
+                is_char_tgt, tgt_name = self._parse_node_string(target_str)
+                
+                if is_char_tgt:
+                    # Target is a character - create if doesn't exist, or match and merge
+                    if tgt_name not in self.characters:
+                        # Try to match with existing characters
+                        matched_name = self._match_and_merge_character(tgt_name, character_appearance)
+                        if matched_name:
+                            # Use the matched name (which is the same as tgt_name after merge)
+                            target_node_name = tgt_name
+                        else:
+                            # No match found, create new character
+                            self.add_character(tgt_name)
+                            target_node_name = tgt_name
+                    else:
+                        target_node_name = tgt_name
+                else:
+                    # Target is an object - get or create
+                    _, target_node_name = self._get_or_create_object_node(tgt_name)
+            
+            # Check for duplicate edge
+            edge_key = (source_node_name, target_node_name, edge_content)
+            if edge_key in seen_edges:
+                continue  # Skip duplicate
+            
+            seen_edges.add(edge_key)
+            
+            # Create and add edge
+            edge = Edge(clip_id=clip_id, source=source_node_name, target=target_node_name, content=edge_content, scene=scene)
+            try:
+                self.add_edge(edge)
+            except ValueError as e:
+                print(f"Warning: {e}, skipping triple: {triple}")
+                continue
 
     def edges_of(self, node_id):
         return set(self.adjacency_list_out[node_id]) | set(self.adjacency_list_in[node_id])
@@ -506,7 +549,6 @@ class HeteroGraph:
         Direct connection: An edge where one character is source and the other is target (or vice versa).
         Indirect connection: character1 connects to an object, and that object connects to character2,
         where the clip_id difference between the two edges is less than 4.
-        Ownership connection: character1 interacts with an object that belongs to character2 (or vice versa).
         
         Args:
             character1: First character name (with or without angle brackets, e.g., "<Alice>" or "Alice")
@@ -562,7 +604,7 @@ class HeteroGraph:
                 continue
             
             # Check if other_node is an object (not a character)
-            is_char, _, _, _ = self._parse_node_string(other_node)
+            is_char, _ = self._parse_node_string(other_node)
             if is_char:
                 continue  # Skip if it's a character
             
@@ -591,70 +633,6 @@ class HeteroGraph:
                             result_edges.append(edge2)
                             result_edge_ids.add(edge_id2)
         
-        # 3. Find ownership connections: character1 interacts with object owned by character2
-        for edge_id in char1_edges:
-            edge = self.edges.get(edge_id)
-            if edge is None:
-                continue
-            
-            # Get the other node (not character1)
-            other_node = None
-            if edge.source == character1:
-                other_node = edge.target
-            elif edge.target == character1:
-                other_node = edge.source
-            
-            # Skip if other_node is None or is a character
-            if other_node is None:
-                continue
-            
-            # Check if other_node is an object (not a character)
-            is_char, _, _, _ = self._parse_node_string(other_node)
-            if is_char:
-                continue  # Skip if it's a character
-            
-            # Get the object node to check ownership
-            obj_key = self._string_to_object_key(other_node)
-            if obj_key is not None:
-                obj_node = self.objects.get(obj_key)
-                if obj_node is not None and obj_node.owner == character2:
-                    # Character1 interacts with an object owned by character2
-                    if edge_id not in result_edge_ids:
-                        result_edges.append(edge)
-                        result_edge_ids.add(edge_id)
-        
-        # 4. Find ownership connections: character2 interacts with object owned by character1
-        for edge_id in char2_edges:
-            edge = self.edges.get(edge_id)
-            if edge is None:
-                continue
-            
-            # Get the other node (not character2)
-            other_node = None
-            if edge.source == character2:
-                other_node = edge.target
-            elif edge.target == character2:
-                other_node = edge.source
-            
-            # Skip if other_node is None or is a character
-            if other_node is None:
-                continue
-            
-            # Check if other_node is an object (not a character)
-            is_char, _, _, _ = self._parse_node_string(other_node)
-            if is_char:
-                continue  # Skip if it's a character
-            
-            # Get the object node to check ownership
-            obj_key = self._string_to_object_key(other_node)
-            if obj_key is not None:
-                obj_node = self.objects.get(obj_key)
-                if obj_node is not None and obj_node.owner == character1:
-                    # Character2 interacts with an object owned by character1
-                    if edge_id not in result_edge_ids:
-                        result_edges.append(edge)
-                        result_edge_ids.add(edge_id)
-        
         return result_edges
 
     def edge_embedding_insertion(self):
@@ -662,7 +640,49 @@ class HeteroGraph:
         embeddings = get_multiple_embeddings(edge_contents)
         for edge, embedding in zip(self.edges.values(), embeddings):
             edge.embedding = embedding
-        print(len(embeddings), "embeddings inserted")
+        print(len(embeddings), "edge embeddings inserted")
+    
+    def node_embedding_insertion(self):
+        """
+        Generate embeddings for all nodes (characters and objects) in batch.
+        This is more efficient than generating embeddings one by one during node creation.
+        """
+        # Collect all node names that need embeddings
+        node_names_for_embedding = []
+        node_objects = []
+        
+        # Process character nodes (remove angle brackets for embedding)
+        for char_name, char_node in self.characters.items():
+            if char_node.embedding is None:
+                # Remove angle brackets before calculating embedding
+                name_for_embedding = char_name.strip("<>") if char_name.startswith("<") and char_name.endswith(">") else char_name
+                node_names_for_embedding.append(name_for_embedding)
+                node_objects.append(('character', char_node))
+        
+        # Process object nodes
+        for obj_name, obj_node in self.objects.items():
+            if obj_node.embedding is None:
+                node_names_for_embedding.append(obj_name)
+                node_objects.append(('object', obj_node))
+        
+        if not node_names_for_embedding:
+            print("No nodes need embedding generation")
+            return
+        
+        # Generate all embeddings in batch
+        try:
+            embeddings = get_multiple_embeddings(node_names_for_embedding)
+            for (node_type, node), embedding in zip(node_objects, embeddings):
+                node.embedding = embedding
+            print(f"{len(embeddings)} node embeddings inserted ({len([n for n, _ in node_objects if n == 'character'])} characters, {len([n for n, _ in node_objects if n == 'object'])} objects)")
+        except Exception as e:
+            print(f"Warning: Failed to generate node embeddings in batch: {e}")
+            # Fallback: generate one by one
+            for (node_type, node), name in zip(node_objects, node_names_for_embedding):
+                try:
+                    node.embedding = get_embedding(name)
+                except Exception as e2:
+                    print(f"Warning: Failed to generate embedding for {name}: {e2}")
 
 
     # --------------------------------------------------------
@@ -750,7 +770,7 @@ class HeteroGraph:
                 confidence=confidence
             )
             try:
-                self.add_edge(edge)
+                self.add_high_level_edge(edge)
             except Exception as e:
                 pass
         
@@ -856,7 +876,7 @@ class HeteroGraph:
                     confidence=confidence
                 )
                 try:
-                    self.add_edge(edge)
+                    self.add_high_level_edge(edge)
                     relationships_created.append(rel)
                 except Exception as e:
                     print(f"Failed to add relationship edge: {e}")
@@ -910,7 +930,7 @@ class HeteroGraph:
         
         # Parse the LLM response
         response = strip_code_fences(response)
-        print(response)
+        # print(response)
         try:
             result_dict = json.loads(response)
         except json.JSONDecodeError as e:
@@ -964,7 +984,7 @@ class HeteroGraph:
                 confidence=confidence
             )
             try:
-                self.add_edge(edge)
+                self.add_high_level_edge(edge)
             except Exception as e:
                 print(f"Warning: Failed to add attribute edge for {char_name}: {e}")
         
@@ -1008,7 +1028,7 @@ class HeteroGraph:
                 confidence=confidence
             )
             try:
-                self.add_edge(edge)
+                self.add_high_level_edge(edge)
             except Exception as e:
                 print(f"Warning: Failed to add relationship edge between {char1} and {char2}: {e}")
         
@@ -1017,6 +1037,71 @@ class HeteroGraph:
             "character_attributes": character_attributes,
             "characters_relationships": characters_relationships
         }
+    
+    def insert_character_appearances(self, character_appearance):
+        """
+        Insert character appearances as high-level edges after all clips are processed.
+        Each comma-separated feature in the appearance description becomes a separate edge.
+        
+        Args:
+            character_appearance: Dictionary mapping character names to appearance descriptions
+                                  Can be a dict or JSON string
+        """
+        # Parse character_appearance if it's a JSON string
+        if isinstance(character_appearance, str):
+            try:
+                character_appearance = json.loads(character_appearance)
+            except json.JSONDecodeError:
+                print("Warning: Failed to parse character_appearance JSON string")
+                character_appearance = {}
+        
+        if not isinstance(character_appearance, dict):
+            print("Warning: character_appearance is not a dictionary")
+            return
+        
+        print(f"Inserting character appearances for {len(character_appearance)} characters...")
+        
+        total_edges = 0
+        for char_name, appearance_desc in character_appearance.items():
+            # Normalize character name (add angle brackets if needed)
+            if not char_name.startswith("<") or not char_name.endswith(">"):
+                char_name = f"<{char_name}>"
+            
+            # Verify character exists in graph
+            if char_name not in self.characters:
+                print(f"Warning: Character '{char_name}' not found in graph, skipping appearance")
+                continue
+            
+            # Ensure appearance is a string (comma-separated)
+            if isinstance(appearance_desc, list):
+                appearance_str = ", ".join(str(item) for item in appearance_desc)
+            elif isinstance(appearance_desc, dict):
+                # If it's a dict, convert to comma-separated string
+                appearance_str = ", ".join(f"{k}: {v}" for k, v in appearance_desc.items())
+            else:
+                appearance_str = str(appearance_desc)
+            
+            # Split appearance by commas and create separate edges for each feature
+            appearance_features = [feature.strip() for feature in appearance_str.split(",") if feature.strip()]
+            
+            for feature in appearance_features:
+                # Create appearance edge (high-level edge: clip_id=0, scene=None)
+                # Each feature becomes a separate edge with format: "<feature>"
+                edge = Edge(
+                    clip_id=0,
+                    source=char_name,
+                    target=None,
+                    content=f"{feature}",
+                    scene=None,
+                    confidence=100  # Appearance is factual, so high confidence
+                )
+                try:
+                    self.add_high_level_edge(edge)
+                    total_edges += 1
+                except Exception as e:
+                    print(f"Warning: Failed to add appearance edge for {char_name} (feature: {feature}): {e}")
+        
+        print(f"✓ Character appearances inserted: {total_edges} appearance edges created")
 
 
     # --------------------------------------------------------
@@ -1045,6 +1130,152 @@ class HeteroGraph:
         
         return dot_product / (norm1 * norm2)
     
+    def _get_node_embedding(self, node_str):
+        """
+        Get stored embedding for a node string if available.
+        Both CharacterNode and ObjectNode embeddings are stored during initialization.
+        
+        Args:
+            node_str: Node string representation (e.g., "<Alice>", "coffee")
+        
+        Returns:
+            Embedding vector if stored, None otherwise
+        """
+        if node_str is None:
+            return None
+        
+        node_str = str(node_str).strip()
+        
+        # Check if it's a character node
+        if node_str.startswith("<") and node_str.endswith(">"):
+            char_node = self.get_character(node_str)
+            if char_node is not None and hasattr(char_node, 'embedding') and char_node.embedding is not None:
+                return char_node.embedding
+            return None
+        
+        # Object nodes have stored embeddings
+        obj_node = self.get_object_node(node_str)
+        if obj_node is not None and hasattr(obj_node, 'embedding') and obj_node.embedding is not None:
+            return obj_node.embedding
+        
+        return None
+    
+    def _calculate_node_similarity(self, node1_str, node2_str, node1_embedding, node2_embedding):
+        """
+        Calculate similarity between two nodes.
+        Handles edge cases: None, "?", and missing embeddings.
+        
+        Args:
+            node1_str: First node string (can be None or "?")
+            node2_str: Second node string (can be None or "?")
+            node1_embedding: Embedding for node1 (can be None)
+            node2_embedding: Embedding for node2 (can be None)
+        
+        Returns:
+            float: Similarity score between 0 and 1
+        """
+        # Handle None or "?" cases
+        if node1_str is None or node1_str == "?" or node2_str is None or node2_str == "?":
+            return 0.0
+        
+        # Convert to string and strip
+        node1_str = str(node1_str).strip()
+        node2_str = str(node2_str).strip()
+        
+        # Handle empty strings
+        if not node1_str or not node2_str:
+            return 0.0
+        
+        # Character-Character matching: exact name match
+        if node1_str.startswith("<") and node1_str.endswith(">") and node2_str.startswith("<") and node2_str.endswith(">"):
+            return 1.0 if node1_str == node2_str else 0.0
+        
+        # For Object-Object and Object-Character: use cosine similarity
+        # Need both embeddings to be available
+        if node1_embedding is None or node2_embedding is None:
+            return 0.0
+        
+        try:
+            return self._cosine_similarity(node1_embedding, node2_embedding)
+        except Exception:
+            return 0.0
+
+    
+    def _compute_edge_similarity(self, edge, query_triple, query_embeddings):
+        """
+        Compute the similarity between an edge and a query triple.
+        Handles edge cases: None edge, None/empty query_triple, "?" values, missing embeddings.
+
+        Args:
+            edge: Edge object (can be None)
+            query_triple: [source, content, target, source_weight, content_weight, target_weight] (can contain None or "?")
+            query_embeddings: [source_embedding, content_embedding, target_embedding] (can contain None)
+        
+        Returns:
+            float: Similarity score between the edge and the query triple (0.0 if edge cases)
+        """
+        # Handle None edge
+        if edge is None:
+            return 0.0
+        
+        # Handle None or invalid query_triple
+        if query_triple is None or not isinstance(query_triple, (list, tuple)) or len(query_triple) < 6:
+            return 0.0
+        
+        # Handle None or invalid query_embeddings
+        if query_embeddings is None or not isinstance(query_embeddings, (list, tuple)) or len(query_embeddings) < 3:
+            return 0.0
+        
+        # Extract query components
+        q_source = query_triple[0]
+        q_content = query_triple[1]
+        q_target = query_triple[2]
+        q_source_weight = query_triple[3] if query_triple[3] is not None else 1.0
+        q_content_weight = query_triple[4] if query_triple[4] is not None else 1.0
+        q_target_weight = query_triple[5] if query_triple[5] is not None else 1.0
+        
+        # Extract embeddings
+        source_emb = query_embeddings[0]
+        content_emb = query_embeddings[1]
+        target_emb = query_embeddings[2]
+        
+        # Content similarity (handle None/empty content and missing embeddings)
+        content_sim = 0.0
+        if q_content and q_content != "?" and edge.content and content_emb is not None:
+            if edge.embedding is not None:
+                try:
+                    content_sim = self._cosine_similarity(content_emb, edge.embedding) * q_content_weight
+                except Exception:
+                    # Fallback to exact match
+                    if edge.content == q_content:
+                        content_sim = q_content_weight
+        
+        # Normal direction: (query source, edge source) and (query target, edge target)
+        normal_q_source_sim = 0.0
+        normal_q_target_sim = 0.0
+        if q_source and q_source != "?" and edge.source is not None:
+            edge_source_emb = self._get_node_embedding(edge.source)
+            normal_q_source_sim = self._calculate_node_similarity(q_source, edge.source, source_emb, edge_source_emb) * q_source_weight
+        
+        if q_target and q_target != "?" and edge.target is not None:
+            edge_target_emb = self._get_node_embedding(str(edge.target))
+            normal_q_target_sim = self._calculate_node_similarity(q_target, str(edge.target), target_emb, edge_target_emb) * q_target_weight
+        
+        # Reversed direction: (query source, edge target) and (query target, edge source)
+        reversed_q_source_sim = 0.0
+        reversed_q_target_sim = 0.0
+        if q_source and q_source != "?" and edge.target is not None:
+            edge_target_emb = self._get_node_embedding(str(edge.target))
+            reversed_q_source_sim = self._calculate_node_similarity(q_source, str(edge.target), source_emb, edge_target_emb) * q_source_weight
+        
+        if q_target and q_target != "?" and edge.source is not None:
+            edge_source_emb = self._get_node_embedding(edge.source)
+            reversed_q_target_sim = self._calculate_node_similarity(q_target, edge.source, target_emb, edge_source_emb) * q_target_weight
+        
+        # Return the maximum of normal and reversed directions plus content similarity
+        return content_sim + max(normal_q_source_sim + normal_q_target_sim, reversed_q_source_sim + reversed_q_target_sim)
+
+
     def search_high_level_edges(self, query_triples, k):
         """
         Search for top-k high-level edges (clip_id=0, scene=None) using embedding-based similarity.
@@ -1061,6 +1292,10 @@ class HeteroGraph:
             return []
         
         # Normalize query_triples to list of lists
+        # Filter out None values
+        query_triples = [q for q in query_triples if q is not None]
+        if not query_triples:
+            return []
         if isinstance(query_triples[0], str):
             query_triples = [query_triples]
         
@@ -1074,21 +1309,33 @@ class HeteroGraph:
             return []
         
         # Pre-compute query embeddings for each triple component
-        query_embeddings = {}
+        # Store as list per triple: [source_emb, content_emb, target_emb]
+        query_triple_embeddings = []
         for q_triple in query_triples:
-            q_source = q_triple[0] if len(q_triple) > 0 else None
-            q_content = q_triple[1] if len(q_triple) > 1 else None
-            q_target = q_triple[2] if len(q_triple) > 2 else None
+            if q_triple is None:
+                query_triple_embeddings.append([None, None, None])
+                continue
             
+            q_source = q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None
+            q_content = q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None
+            q_target = q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None
+            
+            # Compute embeddings (skip "?" to avoid unnecessary API calls)
+            source_emb = None
             if q_source and q_source != "?":
-                if q_source not in query_embeddings:
-                    query_embeddings[q_source] = get_embedding(q_source)
+                source_for_emb = q_source.strip("<>") if q_source.startswith("<") and q_source.endswith(">") else q_source
+                source_emb = get_embedding(source_for_emb)
+            
+            content_emb = None
             if q_content and q_content != "?":
-                if q_content not in query_embeddings:
-                    query_embeddings[q_content] = get_embedding(q_content)
+                content_emb = get_embedding(q_content)
+            
+            target_emb = None
             if q_target and q_target != "?":
-                if q_target not in query_embeddings:
-                    query_embeddings[q_target] = get_embedding(q_target)
+                target_for_emb = q_target.strip("<>") if q_target.startswith("<") and q_target.endswith(">") else q_target
+                target_emb = get_embedding(target_for_emb)
+            
+            query_triple_embeddings.append([source_emb, content_emb, target_emb])
         
         # Score edges based on embedding similarity with bidirectional matching
         scored_edges = []
@@ -1096,17 +1343,16 @@ class HeteroGraph:
             score = 0.0
             
             # Match against each query triple using embeddings
-            for q_triple in query_triples:
-                q_source = q_triple[0] if len(q_triple) > 0 else None
-                q_content = q_triple[1] if len(q_triple) > 1 else None
-                q_target = q_triple[2] if len(q_triple) > 2 else None
+            for i, q_triple in enumerate(query_triples):
+                if q_triple is None:
+                    continue
                 
-                # Extract weights (default to 1.0 if not provided for backward compatibility)
-                q_source_weight = q_triple[3] if len(q_triple) > 3 and q_triple[3] is not None else 1.0
-                q_content_weight = q_triple[4] if len(q_triple) > 4 and q_triple[4] is not None else 1.0
-                q_target_weight = q_triple[5] if len(q_triple) > 5 and q_triple[5] is not None else 1.0
+                # Extract weights (default to 1.0 if not provided)
+                q_source_weight = q_triple[3] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 3 and q_triple[3] is not None else 1.0
+                q_content_weight = q_triple[4] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 4 and q_triple[4] is not None else 1.0
+                q_target_weight = q_triple[5] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 5 and q_triple[5] is not None else 1.0
                 
-                # Normalize weights to sum to 1.0 for proper scaling
+                # Normalize weights to sum to 1.0
                 total_weight = q_source_weight + q_content_weight + q_target_weight
                 if total_weight > 0:
                     q_source_weight_norm = q_source_weight / total_weight
@@ -1117,68 +1363,20 @@ class HeteroGraph:
                     q_content_weight_norm = 0.34
                     q_target_weight_norm = 0.33
                 
-                # Content similarity (direction-independent)
-                content_score = 0.0
-                if q_content and q_content != "?":
-                    if edge.content:
-                        try:
-                            edge_content_emb = get_embedding(edge.content)
-                            sim = self._cosine_similarity(query_embeddings[q_content], edge_content_emb)
-                            content_score = sim * q_content_weight_norm
-                        except Exception:
-                            # Fallback to exact match
-                            if edge.content == q_content:
-                                content_score = q_content_weight_norm * 2.0
+                # Prepare query triple with normalized weights
+                query_triple_with_weights = [
+                    q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None,
+                    q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None,
+                    q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None,
+                    q_source_weight_norm,
+                    q_content_weight_norm,
+                    q_target_weight_norm
+                ]
                 
-                # Bidirectional entity matching: try both directions and keep the higher weighted score
-                # Weights stick with query elements, not positions
-                entity_score = 0.0
-                if (q_source and q_source != "?") or (q_target and q_target != "?"):
-                    # Track similarity scores for q_source and q_target separately
-                    q_source_sim = 0.0
-                    q_target_sim = 0.0
-                    
-                    # Normal direction: (query source, edge source) and (query target, edge target)
-                    if q_source and q_source != "?" and edge.source:
-                        try:
-                            edge_source_emb = get_embedding(edge.source)
-                            q_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_source_emb)
-                        except Exception:
-                            if edge.source == q_source:
-                                q_source_sim = 1.0
-                    
-                    if q_target and q_target != "?" and edge.target:
-                        try:
-                            edge_target_emb = get_embedding(str(edge.target))
-                            q_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_target_emb)
-                        except Exception:
-                            if str(edge.target) == q_target:
-                                q_target_sim = 1.0
-                    
-                    # Reversed direction: (query source, edge target) and (query target, edge source)
-                    # Weights still stick with query elements: q_source_weight stays with q_source match
-                    if q_source and q_source != "?" and edge.target:
-                        try:
-                            edge_target_emb = get_embedding(str(edge.target))
-                            reversed_q_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_target_emb)
-                            q_source_sim = max(q_source_sim, reversed_q_source_sim)  # Keep best match for q_source
-                        except Exception:
-                            if str(edge.target) == q_source:
-                                q_source_sim = max(q_source_sim, 1.0)
-                    
-                    if q_target and q_target != "?" and edge.source:
-                        try:
-                            edge_source_emb = get_embedding(edge.source)
-                            reversed_q_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_source_emb)
-                            q_target_sim = max(q_target_sim, reversed_q_target_sim)  # Keep best match for q_target
-                        except Exception:
-                            if edge.source == q_target:
-                                q_target_sim = max(q_target_sim, 1.0)
-                    
-                    # Apply weights to the best similarities found in either direction
-                    entity_score = q_source_weight_norm * q_source_sim + q_target_weight_norm * q_target_sim
-                
-                score += content_score + entity_score
+                # Compute similarity (edge cases handled in _compute_edge_similarity)
+                query_embeddings = query_triple_embeddings[i]
+                triple_score = self._compute_edge_similarity(edge, query_triple_with_weights, query_embeddings)
+                score += triple_score
             
             # Add confidence score if available
             if hasattr(edge, 'confidence') and edge.confidence:
@@ -1208,25 +1406,41 @@ class HeteroGraph:
             return []
         
         # Normalize query_triples to list of lists
+        # Filter out None values
+        query_triples = [q for q in query_triples if q is not None]
+        if not query_triples:
+            return []
         if isinstance(query_triples[0], str):
             query_triples = [query_triples]
         
         # Pre-compute query embeddings for each triple component
-        query_embeddings = {}
+        # Store as list per triple: [source_emb, content_emb, target_emb]
+        query_triple_embeddings = []
         for q_triple in query_triples:
-            q_source = q_triple[0] if len(q_triple) > 0 else None
-            q_content = q_triple[1] if len(q_triple) > 1 else None
-            q_target = q_triple[2] if len(q_triple) > 2 else None
+            if q_triple is None:
+                query_triple_embeddings.append([None, None, None])
+                continue
             
+            q_source = q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None
+            q_content = q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None
+            q_target = q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None
+            
+            # Compute embeddings (skip "?" to avoid unnecessary API calls)
+            source_emb = None
             if q_source and q_source != "?":
-                if q_source not in query_embeddings:
-                    query_embeddings[q_source] = get_embedding(q_source)
+                source_for_emb = q_source.strip("<>") if q_source.startswith("<") and q_source.endswith(">") else q_source
+                source_emb = get_embedding(source_for_emb)
+            
+            content_emb = None
             if q_content and q_content != "?":
-                if q_content not in query_embeddings:
-                    query_embeddings[q_content] = get_embedding(q_content)
+                content_emb = get_embedding(q_content)
+            
+            target_emb = None
             if q_target and q_target != "?":
-                if q_target not in query_embeddings:
-                    query_embeddings[q_target] = get_embedding(q_target)
+                target_for_emb = q_target.strip("<>") if q_target.startswith("<") and q_target.endswith(">") else q_target
+                target_emb = get_embedding(target_for_emb)
+            
+            query_triple_embeddings.append([source_emb, content_emb, target_emb])
         
         # Pre-compute spatial constraint embedding if provided
         spatial_embedding = None
@@ -1257,17 +1471,16 @@ class HeteroGraph:
             base_similarity = 0.0
             
             # Match against each query triple using embeddings
-            for q_triple in query_triples:
-                q_source = q_triple[0] if len(q_triple) > 0 else None
-                q_content = q_triple[1] if len(q_triple) > 1 else None
-                q_target = q_triple[2] if len(q_triple) > 2 else None
+            for i, q_triple in enumerate(query_triples):
+                if q_triple is None:
+                    continue
                 
-                # Extract weights (default to 1.0 if not provided for backward compatibility)
-                q_source_weight = q_triple[3] if len(q_triple) > 3 and q_triple[3] is not None else 1.0
-                q_content_weight = q_triple[4] if len(q_triple) > 4 and q_triple[4] is not None else 1.0
-                q_target_weight = q_triple[5] if len(q_triple) > 5 and q_triple[5] is not None else 1.0
+                # Extract weights (default to 1.0 if not provided)
+                q_source_weight = q_triple[3] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 3 and q_triple[3] is not None else 1.0
+                q_content_weight = q_triple[4] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 4 and q_triple[4] is not None else 1.0
+                q_target_weight = q_triple[5] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 5 and q_triple[5] is not None else 1.0
                 
-                # Normalize weights to sum to 1.0 for proper scaling
+                # Normalize weights to sum to 1.0
                 total_weight = q_source_weight + q_content_weight + q_target_weight
                 if total_weight > 0:
                     q_source_weight_norm = q_source_weight / total_weight
@@ -1278,72 +1491,19 @@ class HeteroGraph:
                     q_content_weight_norm = 0.5
                     q_target_weight_norm = 0.25
                 
-                # Calculate source, content, and target similarities with bidirectional matching
-                source_sim = 0.0
-                content_sim = 0.0
-                target_sim = 0.0
+                # Prepare query triple with normalized weights
+                query_triple_with_weights = [
+                    q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None,
+                    q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None,
+                    q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None,
+                    q_source_weight_norm,
+                    q_content_weight_norm,
+                    q_target_weight_norm
+                ]
                 
-                # Content similarity (direction-independent)
-                if q_content and q_content != "?" and edge.content:
-                    try:
-                        edge_content_emb = get_embedding(edge.content)
-                        content_sim = self._cosine_similarity(query_embeddings[q_content], edge_content_emb)
-                    except Exception:
-                        # Fallback to exact match
-                        if edge.content == q_content:
-                            content_sim = 1.0
-                
-                # Bidirectional entity matching: try both directions and keep the higher weighted score
-                # Weights stick with query elements, not positions
-                if (q_source and q_source != "?") or (q_target and q_target != "?"):
-                    # Track similarity scores for q_source and q_target separately
-                    q_source_sim = 0.0
-                    q_target_sim = 0.0
-                    
-                    # Normal direction: (query source, edge source) and (query target, edge target)
-                    if q_source and q_source != "?" and edge.source:
-                        try:
-                            edge_source_emb = get_embedding(edge.source)
-                            q_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_source_emb)
-                        except Exception:
-                            if edge.source == q_source:
-                                q_source_sim = 1.0
-                    
-                    if q_target and q_target != "?" and edge.target:
-                        try:
-                            edge_target_emb = get_embedding(str(edge.target))
-                            q_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_target_emb)
-                        except Exception:
-                            if str(edge.target) == q_target:
-                                q_target_sim = 1.0
-                    
-                    # Reversed direction: (query source, edge target) and (query target, edge source)
-                    # Weights still stick with query elements: q_source_weight stays with q_source match
-                    if q_source and q_source != "?" and edge.target:
-                        try:
-                            edge_target_emb = get_embedding(str(edge.target))
-                            reversed_q_source_sim = self._cosine_similarity(query_embeddings[q_source], edge_target_emb)
-                            q_source_sim = max(q_source_sim, reversed_q_source_sim)  # Keep best match for q_source
-                        except Exception:
-                            if str(edge.target) == q_source:
-                                q_source_sim = max(q_source_sim, 1.0)
-                    
-                    if q_target and q_target != "?" and edge.source:
-                        try:
-                            edge_source_emb = get_embedding(edge.source)
-                            reversed_q_target_sim = self._cosine_similarity(query_embeddings[q_target], edge_source_emb)
-                            q_target_sim = max(q_target_sim, reversed_q_target_sim)  # Keep best match for q_target
-                        except Exception:
-                            if edge.source == q_target:
-                                q_target_sim = max(q_target_sim, 1.0)
-                    
-                    # Use q_source_sim and q_target_sim (already contain best matches in either direction)
-                    source_sim = q_source_sim
-                    target_sim = q_target_sim
-                
-                # Base similarity: weighted sum using query element weights
-                # Weights are correctly applied to their corresponding query elements
-                triple_similarity = q_source_weight_norm * source_sim + q_content_weight_norm * content_sim + q_target_weight_norm * target_sim
+                # Compute similarity (edge cases handled in _compute_edge_similarity)
+                query_embeddings = query_triple_embeddings[i]
+                triple_similarity = self._compute_edge_similarity(edge, query_triple_with_weights, query_embeddings)
                 base_similarity = max(base_similarity, triple_similarity)  # Keep max across all query triples
             
             # Calculate scene similarity

@@ -1,26 +1,151 @@
 import pickle
-from utils.search import search
 from utils.llm import generate_text_response
-from utils.prompts import prompt_semantic_video
+from utils.prompts import prompt_semantic_video, prompt_parse_query
+from utils.search import search_with_parse
+from utils.reasoning import parse_semantic_response, extract_clip_ids, watch_video_clips
 
 
-def reason(question, graph):
+def evaluate_semantic_answer(question, graph_search_results):
+    """
+    For step 2: Evaluate semantic answer
+    Evaluate whether the graph search results are sufficient to answer the question.
     
-    # Search the graph for relevant information
-    try:
-        search_results = search(question, graph)
-    except Exception as e:
-        raise Exception(f"Error searching graph: {e}")
+    Args:
+        question: The question to answer
+        graph_search_results: The formatted search results from the graph
     
+    Returns:
+        dict with keys: 'semantic_video_output', 'parsed_response' (with action, content, summary)
+    """
     # Combine prompt, question, and search results
-    prompt = prompt_semantic_video + "\n\nExtracted knowledge from graph:\n" + search_results + "\n\nQuestion: " + question
+    prompt = prompt_semantic_video + "\n\nExtracted knowledge from graph:\n" + graph_search_results + "\n\nQuestion: " + question
     
     # Get semantic answer from LLM
     try:
-        response = generate_text_response(prompt)
-        return response.strip()
+        semantic_response = generate_text_response(prompt)
     except Exception as e:
         raise Exception(f"Error generating semantic answer: {e}")
+    
+    # Parse the response
+    try:
+        parsed = parse_semantic_response(semantic_response)
+    except Exception as e:
+        raise Exception(f"Error parsing semantic response: {e}\nResponse: {semantic_response}")
+    
+    return {
+        'semantic_video_output': semantic_response,
+        'parsed_response': parsed
+    }
+
+
+def reason(question, graph, video_name):
+    """
+    Reason about a question using the graph and optionally watching video clips.
+    
+    Args:
+        question: The question to answer
+        graph: HeteroGraph instance
+        video_name: Name of the video (e.g., "gym_01") used to locate frame directories
+    
+    Returns:
+        dict with keys:
+            - 'parse_query_output': Output from prompt_parse_query
+            - 'graph_search_results': Formatted search results from the graph
+            - 'semantic_video_output': Output from prompt_semantic_video
+            - 'video_answer_outputs': List of outputs from prompt_video_answer for each clip watched
+            - 'final_answer': The final answer to the question
+    """
+    result = {
+        'parse_query_output': None,
+        'graph_search_results': None,
+        'semantic_video_output': None,
+        'video_answer_outputs': None,
+        'final_answer': None
+    }
+    
+    print("Question:", question)
+    
+    #--------------------------------
+    # Part 1: Search the graph
+    #--------------------------------
+    print("\n[Step 1] Searching the graph...")
+    try:
+        # Parse query using LLM
+        parse_query_response = generate_text_response(prompt_parse_query + "\n" + question)
+        result['parse_query_output'] = parse_query_response
+        print("Parse Query Output:")
+        print(parse_query_response)
+        
+        # Search the graph with parsed query
+        graph_search_results = search_with_parse(question, graph, parse_query_response)
+        result['graph_search_results'] = graph_search_results
+        print("\nGraph Search Results:")
+        print(graph_search_results)
+        
+    except Exception as e:
+        raise Exception(f"Error searching graph: {e}")
+    
+    #--------------------------------
+    # Part 2: Evaluate semantic answer
+    #--------------------------------
+    print("\n[Step 2] Evaluating semantic answer...")
+    try:
+        semantic_result = evaluate_semantic_answer(question, result['graph_search_results'])
+        result['semantic_video_output'] = semantic_result['semantic_video_output']
+        parsed = semantic_result['parsed_response']
+        
+        print(result['semantic_video_output'])
+    except Exception as e:
+        raise Exception(f"Error evaluating semantic answer: {e}")
+    
+    # If action is Answer, return immediately
+    if parsed['action'].upper() == 'ANSWER':
+        result['final_answer'] = parsed['content']
+        result['video_answer_outputs'] = []
+        print("FINAL ANSWER (from graph):")
+        print(result['final_answer'])
+        return result
+    
+    # If action is Search, watch the video clips
+    if parsed['action'].upper() != 'SEARCH':
+        raise ValueError(f"Unknown action: {parsed['action']}")
+    
+    #--------------------------------
+    # Part 3: Watch the video clips
+    #--------------------------------
+    # Extract clip IDs from content
+    clip_ids = extract_clip_ids(parsed['content'])
+    if not clip_ids:
+        raise ValueError(f"Could not extract clip IDs from content: {parsed['content']}")
+    
+    print(f"\n[Step 3] Watching video clips: {clip_ids}")
+    
+    # Watch video clips
+    try:
+        video_result = watch_video_clips(
+            question, 
+            clip_ids, 
+            video_name, 
+            initial_summary=parsed.get('summary'),
+            print_progress=True
+        )
+        result['video_answer_outputs'] = video_result['video_answer_outputs']
+        result['final_answer'] = video_result['final_answer']
+        
+        print("Video Answer Outputs:")
+        if result['video_answer_outputs']:
+            for i, clip_output in enumerate(result['video_answer_outputs'], 1):
+                print(f"   Clip {clip_output['clip_id']}:")
+                print(f"   {clip_output['video_answer_output']}")
+        else:
+            print("   No video clips were processed.")
+    except Exception as e:
+        raise Exception(f"Error watching video clips: {e}")
+    
+    print("Final Answer:")
+    print(result['final_answer'])
+    
+    return result
 
 
 if __name__ == "__main__":
@@ -29,10 +154,10 @@ if __name__ == "__main__":
         graph = pickle.load(f)
     
     question = "Which takeout should be taken to Anna?"
+    video_name = "gym_01"
     
     try:
-        result = reason(question, graph)
-        print(result)
+        result = reason(question, graph, video_name)
     except Exception as e:
         print(f"Error: {e}")
         import traceback

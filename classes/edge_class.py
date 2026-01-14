@@ -1,4 +1,3 @@
-from utils.llm import get_embedding
 
 class Edge:
     """Edge between two nodes, supports integer IDs."""

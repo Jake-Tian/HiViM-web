@@ -110,13 +110,13 @@ def low_level_edge_to_string(edges):
     
     for edge in sorted_edges:
         # Parse and format source node
-        source_str = _format_node_for_natural_language(edge.source)
+        source_str = format_node_for_natural_language(edge.source)
         
         # Parse and format target node
         if edge.target is None:
             target_str = ""
         else:
-            target_str = _format_node_for_natural_language(edge.target)
+            target_str = format_node_for_natural_language(edge.target)
         
         # Build the action description
         if target_str:
@@ -136,7 +136,7 @@ def low_level_edge_to_string(edges):
     return "\n".join(lines)
 
 
-def _format_node_for_natural_language(node_str):
+def format_node_for_natural_language(node_str):
     """
     Format a node string to natural language, handling character nodes and object nodes
     with ownership and attributes.
@@ -225,4 +225,3 @@ def _format_node_for_natural_language(node_str):
     parts_list.append(name)
     
     return " ".join(parts_list)
-

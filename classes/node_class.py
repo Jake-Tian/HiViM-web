@@ -1,5 +1,3 @@
-from utils.llm import get_embedding
-
 class BaseNode:
     """Base class for all node types with integer IDs."""
     _id_counter = 0
@@ -23,28 +21,15 @@ class BaseNode:
 
 class CharacterNode(BaseNode):
 
-    def __init__(self, name):
+    def __init__(self, name, embedding=None):
         super().__init__(name)
+        # Embedding will be generated in batch later via node_embedding_insertion()
+        self.embedding = embedding
 
 class ObjectNode(BaseNode):
     
-    def __init__(self, name, owner=None, attribute=None, embedding=None):
+    def __init__(self, name, embedding=None):
         super().__init__(name)
-        self.owner = owner
-        self.attribute = attribute
-        if attribute is not None:
-            self.embedding = get_embedding(attribute + " " + name)
-        else:
-            self.embedding = get_embedding(name)
-
-    def get_owner(self):
-        """Get the owner of this object."""
-        return self.owner
-    
-    def get_attribute(self):
-        """Get the attribute of this object."""
-        return self.attribute
-
-
-
+        # Embedding will be generated in batch later via node_embedding_insertion()
+        self.embedding = embedding
 

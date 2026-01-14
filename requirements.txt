@@ -6,4 +6,6 @@ pydub>=0.25.1
 faster-whisper>=0.10.0
 torch>=2.0.0
 pyannote.audio>=3.0.0
+requests>=2.31.0
+tqdm>=4.66.0
 
