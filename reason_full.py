@@ -102,7 +102,7 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     print("\nLoading questions...")
     questions_data = load_questions()
 
-    available_videos = ["gym_01", "living_room_04"]
+    # available_videos = ["gym_01", "living_room_04"]
     
     # Filter questions for available videos
     all_questions = []
@@ -143,11 +143,11 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
                 graph = pickle.load(f)
             
             # Run reasoning
-            # reason_result = reason(question, graph, video_name)
-            reason_result = reason_from_graph(question, graph)
+            reason_result = reason(question, graph, video_name)
+            # reason_result = reason_from_graph(question, graph)
             
             # Evaluate answer
-            predicted_answer = reason_result #.get("final_answer", "")
+            predicted_answer = reason_result.get("final_answer", reason_result.get("answer", ""))
             is_correct = evaluate_answer(question, ground_truth, predicted_answer)
             
             # Add evaluation result and qa_list information to reason_result
