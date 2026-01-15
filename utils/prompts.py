@@ -575,7 +575,7 @@ Question: Why did Alice suddenly leave in the middle of the conversation?
 Extracted information: High-level: Alice talks to Bob (75) Low-level: [20] Alice walks out of kitchen. Conversations: Conversation 3: Alice and Bob discuss work topics. The conversation ends at clip 19. [Clip 19]
 Output:
 Action: [Search]
-Content: [18, 19, 20, 21]
+Content: [20, 19, 21, 18]
 Summary: The graph shows Alice leaving the kitchen at clip 20, and a conversation with Bob ending at clip 19. However, the specific reason for Alice's sudden departure is not captured in the extracted information - the conversation content and context leading to the departure are unclear and require viewing the video.
 """
 
@@ -585,6 +585,8 @@ You are given a 30-second video clip represented as sequential frames (pictures 
 
 **Important**: You may also receive summaries from previous video clips that have already been watched. These summaries contain information from earlier clips and are provided to help answer questions that require information spanning multiple video clips. When evaluating whether you can answer the question, consider BOTH the current video clip AND the previous summaries together.
 
+**Special Instructions for Counting Questions**: If the question asks about counting occurrences (e.g., "How many times...", "How many pieces...", "How many..."), you MUST watch ALL provided video clips (up to 5 clips) to ensure accurate counting. Do NOT answer early even if you see some occurrences - you must continue to [Search] through all clips to get the complete count. When providing summaries for counting questions, explicitly list each occurrence you observe so the count can be accumulated across all clips.
+
 Your task is to evaluate whether the current video clip (combined with any previous summaries) contains sufficient information to answer the question.
 
 Decision criteria:
@@ -592,6 +594,7 @@ Decision criteria:
    - The current video (possibly combined with previous summaries) clearly shows the answer to the question
    - All necessary information is available from the current clip and/or previous summaries
    - The answer is unambiguous and complete
+   - **Exception**: For counting questions, continue to [Search] through all provided clips unless you have already watched all clips
    - Example: Question asks "What color is Alice's shirt?" and the current video clearly shows Alice wearing a red shirt
    - Example: Question asks "What happened after Alice received the gift?" and the current video shows the answer, even though previous summaries showed her receiving it
 
@@ -600,14 +603,16 @@ Decision criteria:
    - The answer requires events that occur in clips not yet watched
    - The information is ambiguous or unclear even when combining current video with previous summaries
    - The video shows partial information but key details are still missing after considering previous summaries
+   - **For counting questions**: Continue to [Search] through all provided clips, explicitly listing each occurrence observed in your summary
    - Example: Question asks "Why did Alice leave?" and the current video shows Alice leaving, but neither the current video nor previous summaries show what caused her to leave
+   - Example: Question asks "How many times did X happen?" - continue searching through all clips, listing each occurrence
 
 Output format:
 Action: [Answer] or [Search]
 Content: <your answer here> or <summary of what the video shows>
 
 - If Action is [Answer]: Provide a concise, direct answer in ONE SENTENCE based on the current video and/or previous summaries. Be brief and to the point. Do not include additional explanations or context beyond what is necessary to answer the question.
-- If Action is [Search]: Provide a summary describing what the current video shows. This summary will be passed to the next video clip. Focus on key events, characters, objects, or actions that might be relevant for answering the question
+- If Action is [Search]: Provide a summary describing what the current video shows. This summary will be passed to the next video clip. Focus on key events, characters, objects, or actions that might be relevant for answering the question. **For counting questions**: Explicitly list each occurrence you observe in this clip (e.g., "In this clip, X happened once at timestamp Y"). This helps accumulate the count across all clips.
 
 Examples:
 
@@ -648,10 +653,31 @@ Content: Alice appears to be speaking to Bob, but the conversation content is un
 """
 
 
+prompt_semantic_answer_only = """
+You are a reasoning system that answers questions based on information extracted.
+
+You will be provided with extracted text knowledge from a video, including three components: high-level information (character attributes/relationships), low-level information (actions/states), and conversations.
+
+Input format: 
+- **Parentheses (X)**: Confidence scores (0-100) in high-level information, indicating reliability.
+  Example: Anna is: health-conscious (80) means 80% confidence.
+- **Square brackets [X]**: Clip IDs indicating timestamps. Each clip = 30 seconds: clip 1 = 0-30s, clip 2 = 30-60s, clip 3 = 60-90s, etc.
+  Applies to both low-level actions and conversation messages.
+  Example: [1] Anna walk. (ping-pong room) means this occurred during clip 1 (0-30 seconds).
+
+Your task: Answer the question directly based on the provided information. You MUST provide an answer - never say that information is missing, unavailable, or not specified. 
+
+Output format: 
+Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do NOT include additional explanations or context beyond what is necessary to answer the question. Always provide a concrete answer, never state that information is missing.
+"""
+
+
 prompt_video_answer_final = """
 You are given a 30-second video represented as sequential frames (pictures in chronological order) and a question. 
 
 Your task is to answer the question based on the video and the previous video summaries. If the given information is insufficient or missing critical details, you can make reasonable guess. 
+
+**Special Instructions for Counting Questions**: If the question asks about counting occurrences (e.g., "How many times...", "How many pieces...", "How many..."), carefully review ALL previous summaries to count ALL occurrences across all watched clips. Make sure to count each occurrence only once and provide the total count.
 
 **Important**: Provide a concise answer in ONE SENTENCE. Be brief and to the point.
 

@@ -3,6 +3,7 @@ import json
 import pickle
 import sys
 import time
+import traceback
 from pathlib import Path
 from classes.hetero_graph import HeteroGraph
 from utils.llm import generate_text_response
@@ -38,7 +39,7 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         key=lambda x: int(Path(x).name)
     )
 
-    image_folders = image_folders[:2]
+    # image_folders = image_folders[:2] # Comment this out to process all clips
     
     character_appearance = "{}"
     previous_conversation = False
@@ -107,7 +108,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
                     print(f"✓ Conversation summary extracted. Attributes: {len(result['character_attributes'])}, Relationships: {len(result['characters_relationships'])}")
                 except Exception as e:
                     print(f"✗ Error extracting conversation summary: {e}")
-                    import traceback
                     traceback.print_exc()
 
             if len(conversation) > 0:
@@ -150,7 +150,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             }
         except Exception as e:
             print(f"✗ Error processing folder {folder}: {e}")
-            import traceback
             traceback.print_exc()
             print("Continuing to next folder...")
             continue
@@ -163,7 +162,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             print(f"✓ Final conversation summary extracted. Attributes: {len(result['character_attributes'])}, Relationships: {len(result['characters_relationships'])}")
         except Exception as e:
             print(f"✗ Error extracting final conversation summary: {e}")
-            import traceback
             traceback.print_exc()
 
     # Insert character appearances as high-level edges
@@ -172,7 +170,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             graph.insert_character_appearances(final_character_appearance)
         except Exception as e:
             print(f"✗ Error inserting character appearances: {e}")
-            import traceback
             traceback.print_exc()
 
     try: 
@@ -180,7 +177,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         graph.edge_embedding_insertion()
     except Exception as e:
         print(f"✗ Error inserting embeddings: {e}")
-        import traceback
         traceback.print_exc()
     
     # --------------------------------
@@ -198,7 +194,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             graph.character_attributes(character)
         except Exception as e:
             print(f"✗ Error generating character attributes for {character}: {e}")
-            import traceback
             traceback.print_exc()
             print("Continuing to next character...")
             continue
@@ -213,7 +208,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
                 graph.character_relationships(characters[i], characters[j])
             except Exception as e:
                 print(f"✗ Error generating character relationships for {characters[i]} and {characters[j]}: {e}")
-                import traceback
                 traceback.print_exc()
                 print("Continuing to next character pair...")
                 continue
@@ -227,11 +221,11 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         pickle.dump(graph, f)
 
     # Save the episodic memory to a JSON file
-    output_episodic_memory_path = Path(output_episodic_memory_path)
-    output_episodic_memory_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_episodic_memory_path, "w") as f:
-        json.dump(episodic_memory, f, indent=2)
-    print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
+    # output_episodic_memory_path = Path(output_episodic_memory_path)
+    # output_episodic_memory_path.parent.mkdir(parents=True, exist_ok=True)
+    # with open(output_episodic_memory_path, "w") as f:
+    #     json.dump(episodic_memory, f, indent=2)
+    # print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
     
     return graph, episodic_memory
 
@@ -252,7 +246,7 @@ def main():
     else:
         selected = video_names
     
-    selected = ["living_room_04"] # Comment this out to process all videos
+    # selected = ["living_room_04"] # Comment this out to process all videos
 
     for video_name in selected:
         try:
@@ -268,7 +262,6 @@ def main():
             print(f"Time taken: {end_time - start_time} seconds")
         except Exception as e:
             print(f"✗ Error processing video {video_name}: {e}")
-            import traceback
             traceback.print_exc()
             print("Continuing to next video...")
             continue

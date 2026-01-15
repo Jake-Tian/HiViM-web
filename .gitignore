@@ -43,3 +43,6 @@ utils/mllm.py
 # OS
 .DS_Store
 Thumbs.db
+
+# Local scripts
+test.sh

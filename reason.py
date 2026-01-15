@@ -56,6 +56,7 @@ def reason(question, graph, video_name):
             - 'final_answer': The final answer to the question
     """
     result = {
+        'question': question,
         'parse_query_output': None,
         'graph_search_results': None,
         'semantic_video_output': None,

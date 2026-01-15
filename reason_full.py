@@ -2,6 +2,7 @@ import json
 import pickle
 from pathlib import Path
 from reason import reason
+from utils.graph_reasoning import reason_from_graph
 from utils.llm import generate_text_response
 from utils.prompts import prompt_agent_verify_answer_referencing
 
@@ -101,7 +102,7 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     print("\nLoading questions...")
     questions_data = load_questions()
 
-    available_videos = ["gym_01"]
+    available_videos = ["gym_01", "living_room_04"]
     
     # Filter questions for available videos
     all_questions = []
@@ -142,10 +143,11 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
                 graph = pickle.load(f)
             
             # Run reasoning
-            reason_result = reason(question, graph, video_name)
+            # reason_result = reason(question, graph, video_name)
+            reason_result = reason_from_graph(question, graph)
             
             # Evaluate answer
-            predicted_answer = reason_result.get("final_answer", "")
+            predicted_answer = reason_result #.get("final_answer", "")
             is_correct = evaluate_answer(question, ground_truth, predicted_answer)
             
             # Add evaluation result and qa_list information to reason_result
@@ -184,15 +186,31 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     output_path = Path(output_dir) / output_filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
+    # Load existing results if file exists
+    existing_results = {}
+    if output_path.exists():
+        print(f"Loading existing results from {output_path}")
+        try:
+            with open(output_path, 'r', encoding='utf-8') as f:
+                existing_results = json.load(f)
+            print(f"Loaded {len(existing_results)} existing results")
+        except Exception as e:
+            print(f"Warning: Could not load existing results: {e}. Starting fresh.")
+            existing_results = {}
+    
+    # Merge new results into existing results (overwrite if question_id already exists)
+    existing_results.update(results)
+    
     print(f"Saving results to {output_path}")
+    print(f"Total results: {len(existing_results)} (including {len(results)} new/updated)")
     
     with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(existing_results, f, indent=2, ensure_ascii=False)
     
-    # Print summary
-    total = len(results)
-    correct = sum(1 for r in results.values() if r.get("evaluator_correct", False))
-    errors = sum(1 for r in results.values() if "error" in r)
+    # Print summary (based on merged results)
+    total = len(existing_results)
+    correct = sum(1 for r in existing_results.values() if r.get("evaluator_correct", False))
+    errors = sum(1 for r in existing_results.values() if "error" in r)
     
     print(f"\nSummary:")
     print(f"Total questions: {total}")
@@ -200,7 +218,7 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     print(f"Accuracy: {correct/total*100:.2f}%" if total > 0 else "N/A")
     print(f"Errors: {errors}")
     
-    return results
+    return existing_results
 
 
 if __name__ == "__main__":

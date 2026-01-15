@@ -1322,16 +1322,16 @@ class HeteroGraph:
             
             # Compute embeddings (skip "?" to avoid unnecessary API calls)
             source_emb = None
-            if q_source and q_source != "?":
+            if q_source and q_source != "?" and isinstance(q_source, str):
                 source_for_emb = q_source.strip("<>") if q_source.startswith("<") and q_source.endswith(">") else q_source
                 source_emb = get_embedding(source_for_emb)
             
             content_emb = None
-            if q_content and q_content != "?":
+            if q_content and q_content != "?" and isinstance(q_content, str):
                 content_emb = get_embedding(q_content)
             
             target_emb = None
-            if q_target and q_target != "?":
+            if q_target and q_target != "?" and isinstance(q_target, str):
                 target_for_emb = q_target.strip("<>") if q_target.startswith("<") and q_target.endswith(">") else q_target
                 target_emb = get_embedding(target_for_emb)
             
@@ -1427,16 +1427,16 @@ class HeteroGraph:
             
             # Compute embeddings (skip "?" to avoid unnecessary API calls)
             source_emb = None
-            if q_source and q_source != "?":
+            if q_source and q_source != "?" and isinstance(q_source, str):
                 source_for_emb = q_source.strip("<>") if q_source.startswith("<") and q_source.endswith(">") else q_source
                 source_emb = get_embedding(source_for_emb)
             
             content_emb = None
-            if q_content and q_content != "?":
+            if q_content and q_content != "?" and isinstance(q_content, str):
                 content_emb = get_embedding(q_content)
             
             target_emb = None
-            if q_target and q_target != "?":
+            if q_target and q_target != "?" and isinstance(q_target, str):
                 target_for_emb = q_target.strip("<>") if q_target.startswith("<") and q_target.endswith(">") else q_target
                 target_emb = get_embedding(target_for_emb)
             
