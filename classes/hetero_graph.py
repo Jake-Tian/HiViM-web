@@ -532,7 +532,8 @@ class HeteroGraph:
             seen_edges.add(edge_key)
             
             # Create and add edge
-            scene_embedding = get_embedding(scene)
+            # Only compute scene_embedding if scene is not None (high-level edges from conversation summaries have scene=None)
+            scene_embedding = get_embedding(scene) if scene is not None else None
             edge = Edge(clip_id=clip_id, source=source_node_name, target=target_node_name, content=edge_content, scene=scene, scene_embedding=scene_embedding)
             try:
                 self.add_edge(edge)
