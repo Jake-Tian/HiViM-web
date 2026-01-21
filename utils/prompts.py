@@ -10,6 +10,10 @@ Your tasks:
      (a) Interaction with objects in the scene.
      (b) Interaction with other characters.
      (c) Actions and movements.
+   - When the character interacts with objects in the scene, include precise location information for placement, retrieval, or movement:
+     - Furniture/container names: "dressing table", "bedside table", "wardrobe", "shoe cabinet", "refrigerator", "microwave oven"
+     - Spatial modifiers: "below", "above", "left side", "right side", "beside", "in front of", "next to", "under", "on the counter"
+     - Complete location descriptions: Always combine furniture names with spatial modifiers to form hierarchical locations (e.g., "cabinet below the dressing table", "second layer of the refrigerator", "cabinet on the left side of the wardrobe"). For retrieval actions, include source locations (e.g., "takes towel from Susan's bag", "gets mask from cabinet below dressing table")
    - Each entry must describe exactly one event/detail. Split sentences if needed.
    - Output format: Python list of strings.
 
@@ -21,41 +25,29 @@ Your tasks:
 3. **Character Appearance**
    - Describe each character's appearance: facial features, clothing, body shape, hairstyle, or other distinctive characteristics.
    - Each characteristic should be concise, separated by commas.
-   - **CRITICAL: Character Matching Before Creating New Characters**
-     Before creating ANY new character (known or unknown), you MUST:
-     1. **Check ALL previously seen characters** (both known names like <Anna>, <Susan>, <Alice> AND unknown like <character_1>, <character_2>, etc.) from ALL earlier clips.
-     2. **Compare appearance features** focusing on:
+   - **Character Matching Rules** (MUST follow before creating new characters):
+     1. **Check ALL previously seen characters** (both known names like <Anna>, <Susan> AND unknown like <character_1>, <character_2>) from ALL earlier clips.
+     2. **Compare appearance** focusing on:
         - **Stable features**: Body shape, facial structure, skin tone, general build
         - **Variable features** (may change): Hair length/style, clothing, accessories, glasses
-        - **Distinctive combinations**: Unique combinations of features that identify a person
-     3. **Match if**: The person matches a previously seen character based on stable features AND distinctive combinations, even if variable features (hair, clothing) have changed.
-     4. **If match found**: 
-        - If matching a known character: Use that character's name directly (e.g., <Anna>)
-        - If matching an unknown character: Add equivalence line at **start of characters_behavior** (e.g., "Equivalence: <character_3>, <Anna>")
-        - Do NOT create a new character entry in character_appearance
-     5. **Only create new character** if NO previous character matches after thorough comparison.
-   - **Existing characters** (if previous appearance info provided): Update if changes observed (e.g., hair cut, clothing change), enhance if new details visible, otherwise keep unchanged.
-   - If the character leaves the scene, keep their appearance information in the dictionary.
-   - If two characters in the scene look similar, extract the most distinctive features to describe them.
-   - **Minimize total characters**: The goal is to have the MINIMUM number of unique characters. When in doubt, match to existing characters rather than creating new ones.
+        - **Distinctive combinations**: Unique feature combinations that identify a person
+     3. **Match if**: Person matches based on stable features and distinctive combinations, even if variable features changed.
+     4. **If match found**:
+        - Known character: Use that name directly (e.g., <Anna>)
+        - Unknown character: Add "Equivalence: <character_X>, <Anna>" at **start of characters_behavior**
+        - Do NOT create new character_appearance entry
+     5. **Only create new character** if NO match found after thorough comparison:
+        - If name mentioned in conversation: Use that name
+        - Otherwise: Create <character_X> with lowest available number
+   - **Existing characters**: Update if changes observed (hair, clothing), enhance if new details visible, otherwise keep unchanged. Keep appearance info even if character leaves scene.
+   - **Minimize total characters**: Goal is MINIMUM unique characters. When in doubt, match to existing rather than creating new.
    - Output format: Python dictionary {<character>: appearance information}.
 
 4. **Scene**: Use one word or phrase to describe the scene in the current video (eg. "bedroom", "gym", "office", etc.).
    - Output format: Python string.
 
 Special Rules:
-- Use angle brackets to represent the characters eg. <Alice>, <Bob>, <robot>, <character_1>, etc.
-- **Character identification priority** (MUST follow in order):
-  1. **Check ALL previously seen characters first** (both known names AND unknown characters from ALL earlier clips):
-     - Compare the person's appearance with EVERY character seen before
-     - Focus on stable features (body shape, facial structure) and distinctive feature combinations
-     - Account for appearance changes (hair can be cut, clothing can change, glasses can be removed/added)
-  2. **If match found with known character**: Use that character's name directly (e.g., if person matches <Anna>, use <Anna>)
-  3. **If match found with unknown character**: Add equivalence line at **start of characters_behavior** (e.g., "Equivalence: <character_3>, <Anna>")
-  4. **Only if NO match found**: Create a new character:
-     - If name mentioned in conversation: Use that name
-     - Otherwise: Create new unknown character (<character_X>) with lowest available number
-  5. **CRITICAL**: Minimize the total number of characters. When appearance is similar, prefer matching to existing characters over creating new ones.
+- Use angle brackets to represent characters eg. <Alice>, <Bob>, <robot> etc.
 - Include the robot (<robot>) if present:
   - It wears black gloves and has no visible face (it holds the camera).
   - Describe its behavior and conversation.
@@ -70,6 +62,7 @@ Return a Python dictionary with exactly four keys:
 {
     "characters_behavior": [
         "<Alice> enters the room.", 
+        "<Alice> takes cap from the cabinet on the left side of the wardrobe.", 
         "<Alice> sits with <Bob> side by side on the couch.", 
         "<Bob> watches TV.", 
         "<robot> puts the coffee on the table."
@@ -96,7 +89,7 @@ prompt_extract_triples = """
 You are given a list of **action sentences** describing character behavior.  
 Convert each sentence into **triples** of the form:
 
-[target, content, source]
+[source, content, target]
 
 Return **ONLY** a valid JSON array (list of lists).  
 No explanation. No markdown. No extra text.
@@ -106,21 +99,21 @@ No explanation. No markdown. No extra text.
 - Use double quotes
 - No trailing commas
 - Each triple must be:
-  [target, content, source]
+  [source, content, target]
 - Preserve the **original sentence order**
 - Preserve the **original action order** within each sentence
 
 ## DEFINITIONS
-- **Target**: the entity performing the action or whose state is described
+- **Source**: the entity performing the action or whose state is described
 - **Content**: the action, relation, or state (verb-centered)
-- **Source**: the entity the action is applied to or related to  
+- **Target**: the entity the action is applied to or related to  
   Use `null` if none exists
 
 ## EXTRACTION PRIORITY (FOLLOW IN ORDER)
 
-1. Identify actors (targets)
+1. Identify actors (sources)
 2. Identify actions / relations (content)
-3. Identify affected entities (sources)
+3. Identify affected entities (targets)
 4. Resolve pronouns and possessives
 5. Split compound structures
 6. Normalize verbs
@@ -129,12 +122,12 @@ No explanation. No markdown. No extra text.
 
 ## RULES: 
 
-1. TARGET & SOURCE (ENTITIES)
+1. SOURCE & TARGET (ENTITIES)
 - May be:
   - Characters (use verbatim names with angle brackets)
   - Objects (nouns, physical or abstract)
 - Copy entity names **verbatim**
-- Use `null` if no source exists
+- Use `null` if no target exists
 - Do **not** invent entities
 
 2. CONTENT (VERBS / RELATIONS)
@@ -190,7 +183,10 @@ Examples:
 
 8. STATE REPRESENTATION
 - If an action implies a **resulting state**, add a state triple.
-  eg. "<robot> puts coffee on table" → ["<robot>", "puts", "coffee"], ["coffee", "is on", "table"]
+- Preserve complete location phrases as single entities in target fields. 
+Examples:
+- "<robot> puts coffee on table" → ["<robot>", "puts", "coffee"], ["coffee", "is on", "table"]
+- "<Alice> takes towel from Susan's bag" → ["<Alice>", "takes", "towel"], ["towel", "is in", "Susan's bag"]
 
 9. DEDUPLICATION
 - Keep only **distinct, meaningful** actions
@@ -199,7 +195,7 @@ Examples:
 
 10. FALLBACK RULE
 If unsure, output a **minimal transformation**:
-[target, verb, source]
+[source, verb, target]
 
 ## EXAMPLE: 
 Input:
@@ -395,14 +391,28 @@ You are a query parser for a knowledge graph system that stores video informatio
 
 Given a query and budget `k=50`, output:
 
-1. **Query triple** `[source, content, target, source_weight, content_weight, target_weight]`:
+1. **Query triple(s)**: Output **`query_triples`** as a list of 1 to 3 triples.
+   - Triple format: `[source, content, target, source_weight, content_weight, target_weight]`
    - Use `null` for missing components, normalize to graph format (angle brackets for characters)
+   - If the question is complex (needs an extra constraint), split into:
+     - **Main triple** (first in the list): the core ask with higher weights
+     - **Helper triple** (second in the list): supporting constraint with lower weights
+     - **Additional triple** (third in the list): additional information with lowest weights
    - **Assign weights** (0.0-1.0):
 
 **Weight Rules**:
-- **High (0.7-1.0)**: Specific character/object names (e.g., "Alice", "coffee", "the red cup") - use 0.9-1.0 for critical entities
+- **High (0.7-1.0)**: Specific character/object names (e.g., "Anna", "coffee", "the red cup") - use 0.9-1.0 for critical entities
 - **Medium (0.4-0.7)**: General objects/locations (e.g., "cup", "room") - use 0.5-0.7 for context
 - **Low (0.1-0.4)**: What we're searching for - question marks ("?"), relationship terms ("relationship", "friendship"), unknown actions - use 0.2-0.4 for search targets, 0.1-0.2 for vague terms
+
+**Special Rules for Location Queries**:
+- **Preserve hierarchical locations**: When parsing location queries, keep complete hierarchical location phrases as single entities in target fields (e.g., "cabinet on the left side of the wardrobe", "cabinet below the dressing table", "table on the right of the water dispenser"). Do NOT split them into separate components.
+- **Temporal-spatial queries**: 
+  - "where is X now?" → Use triple `[X, "is at", "?", ...]` with high weight on X. The search should prioritize the most recent state edges (highest clip_id).
+  - "last time" / "last place" → Use triple `[X, "is at", "?", ...]` and prioritize edges with highest clip_id values.
+  - "where should X be placed?" → Use triple `[X, "should be placed at", "?", ...]` or `[X, "is placed at", "?", ...]` to find placement instructions.
+- **Source location queries**: "where can robot get X?" / "where did X get Y from?" → Use triple `[X, "gets", "Y", ...]` or `[Y, "is in", "?", ...]` to find source locations. Include a helper triple if needed: `[Y, "is from", "?", ...]`.
+- **Allocation for location queries**: Prioritize low-level edges (35-45) since they contain spatial information. Use conversations (5-10) only if placement instructions might be mentioned in dialogue.
 
 2. **Allocation** `{k_high_level, k_low_level, k_conversations}`:
    - Total must be ≤ 50
@@ -411,60 +421,63 @@ Given a query and budget `k=50`, output:
    - Conversations: 10-45 based on needs
 
 3. **speaker_strict**: 
-   - Set to `["<Alice>", "<Bob>"]` when query asks about dialogue between specific speakers
+   - Set to `["<Anna>", "<Susan>"]` when query asks about dialogue between specific speakers
    - Set to `null` otherwise
 
-4. **spatial_constraint**: Location string if query mentions specific place, else `null`
+4. **spatial_constraint**: Location string only for general spaces (e.g., gym, office, kitchen, bedroom, living room, meeting room). Do NOT use objects or furniture (e.g., table, dressing table, sofa) as spatial constraints. Otherwise `null`.
 
 ## EXAMPLES
 
-**Example 1**: "What is Alice's relationship with Bob?"
+**Example 1**: "What is Anna's relationship with Susan?"
 ```json
 {
-  "query_triple": ["<Alice>", "relationship", "<Bob>", 0.95, 0.2, 0.95], 
-  "spatial_constraint": null, 
-  "speaker_strict": null, 
+  "query_triples": [["<Anna>", "relationship", "<Susan>", 0.95, 0.2, 0.95]],
+  "spatial_constraint": null,
+  "speaker_strict": null,
   "allocation": {"k_high_level": 10, "k_low_level": 10, "k_conversations": 30, "total_k": 50, "reasoning": "Relationship query - use high-level for relationships, conversations for evidence"}
 }
 ```
 
-**Example 2**: "Why did Alice leave the room?"
+**Example 2**: "What did Emma do with the coffee in the kitchen?"
 ```json
 {
-  "query_triple": ["<Alice>", "leaves", "room", 0.95, 0.5, 0.6], 
-  "spatial_constraint": "room", 
-  "speaker_strict": null, 
-  "allocation": {"k_high_level": 8, "k_low_level": 12, "k_conversations": 30, "total_k": 50, "reasoning": "Why query - prioritize conversations for motivations"}
-}
-```
-
-**Example 3**: "What did Alice do with the coffee in the kitchen?"
-```json
-{
-  "query_triple": ["<Alice>", "?", "coffee", 0.95, 0.15, 0.9], 
-  "spatial_constraint": "kitchen", 
-  "speaker_strict": null, 
+  "query_triples": [["<Emma>", "?", "coffee", 0.95, 0.15, 0.9]],
+  "spatial_constraint": "kitchen",
+  "speaker_strict": null,
   "allocation": {"k_high_level": 5, "k_low_level": 38, "k_conversations": 7, "total_k": 50, "reasoning": "Action query - prioritize low-level edges"}
 }
 ```
 
-**Example 4**: "What did Alice and Bob discuss?"
+**Example 3**: "What did Emily and David discuss?"
 ```json
 {
-  "query_triple": ["<Alice>", "discusses", "<Bob>", 0.9, 0.3, 0.9], 
-  "spatial_constraint": null, 
-  "speaker_strict": ["<Alice>", "<Bob>"], 
+  "query_triples": [["<Emily>", "discusses", "<David>", 0.9, 0.3, 0.9]],
+  "spatial_constraint": null,
+  "speaker_strict": ["<Emily>", "<David>"],
   "allocation": {"k_high_level": 2, "k_low_level": 3, "k_conversations": 45, "total_k": 50, "reasoning": "Dialogue query - prioritize conversations with specific speakers"}
 }
 ```
 
-**Example 5**: "Where is the red cup?"
+**Example 4**: "How many things on the dressing table are not often used by Lily?"
 ```json
 {
-  "query_triple": ["cup#red", "is at", "?", 0.9, 0.4, 0.15], 
-  "spatial_constraint": null, 
-  "speaker_strict": null, 
-  "allocation": {"k_high_level": 2, "k_low_level": 40, "k_conversations": 8, "total_k": 50, "reasoning": "Spatial query - prioritize low-level edges for location"}
+  "query_triples": [
+    ["<Lily>", "use", "things", 0.9, 0.7, 0.4],
+    ["things", "is on", "dressing table", 0.2, 0.4, 0.4]
+  ],
+  "spatial_constraint": null,
+  "speaker_strict": null,
+  "allocation": {"k_high_level": 2, "k_low_level": 40, "k_conversations": 8, "total_k": 50, "reasoning": "Main triple targets usage by Lily; helper triple constrains items to dressing table"}
+}
+```
+
+**Example 5**: "where is the tape now?"
+```json
+{
+  "query_triples": [["tape", "is at", "?", 0.8, 0.5, 0.15]],
+  "spatial_constraint": null,
+  "speaker_strict": null,
+  "allocation": {"k_high_level": 2, "k_low_level": 42, "k_conversations": 6, "total_k": 50, "reasoning": "Temporal-spatial query - 'now' means most recent location. Prioritize low-level edges with highest clip_id to find current state"}
 }
 ```
 

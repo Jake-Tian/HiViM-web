@@ -39,7 +39,7 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         key=lambda x: int(Path(x).name)
     )
 
-    # image_folders = image_folders[:2] # Comment this out to process all clips
+    image_folders = image_folders[:2] # Comment this out to process all clips
     
     character_appearance = "{}"
     previous_conversation = False
@@ -63,7 +63,16 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             #--------------------------------
             # Episodic Memory
             #--------------------------------
-            prompt = "Character appearance from previous videos: \n" + character_appearance + "\n" + prompt_generate_episodic_memory
+            # Safety check: ensure character_appearance is always a string for prompt construction
+            if isinstance(character_appearance, dict):
+                character_appearance_str = json.dumps(character_appearance, indent=2)
+            elif isinstance(character_appearance, str):
+                character_appearance_str = character_appearance
+            else:
+                print(f"Warning: character_appearance has unexpected type {type(character_appearance)}, defaulting to empty dict")
+                character_appearance_str = "{}"
+            
+            prompt = "Character appearance from previous videos: \n" + character_appearance_str + "\n" + prompt_generate_episodic_memory
             messages = generate_messages(current_images, prompt)
             try:
                 response = get_response(messages)
@@ -152,6 +161,12 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             print(f"✗ Error processing folder {folder}: {e}")
             traceback.print_exc()
             print("Continuing to next folder...")
+            # Safety: ensure character_appearance is converted to string even after exception
+            # to prevent TypeError on next iteration
+            if isinstance(character_appearance, dict):
+                character_appearance = json.dumps(character_appearance, indent=2)
+            elif not isinstance(character_appearance, str):
+                character_appearance = "{}"
             continue
 
     # Extract summary for any remaining active conversation at the end
@@ -246,7 +261,7 @@ def main():
     else:
         selected = video_names
     
-    # selected = ["living_room_04"] # Comment this out to process all videos
+    selected = ["kitchen_21"] # Comment this out to process all videos
 
     for video_name in selected:
         try:

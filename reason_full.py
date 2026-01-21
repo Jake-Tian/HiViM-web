@@ -95,14 +95,13 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     """
     # Find all videos with .pkl files
     print("Finding available videos...")
-    available_videos = find_pkl_files()
+    # available_videos = find_pkl_files()
+    available_videos = ["living_room_03", "study_15", "bedroom_10", "meeting_room_03", "living_room_12", "bedroom_02", "office_02", "gym_04", "study_02"]
     print(f"Found {len(available_videos)} videos: {sorted(available_videos)}")
     
     # Load questions
     print("\nLoading questions...")
     questions_data = load_questions()
-
-    # available_videos = ["gym_01", "living_room_04"]
     
     # Filter questions for available videos
     all_questions = []

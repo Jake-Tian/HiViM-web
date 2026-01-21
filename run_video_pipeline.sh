@@ -78,11 +78,12 @@ PY
     continue
   fi
 
-  # Step 4: Answer questions and update results.json
+  # Step 4: Answer questions and update results.json (process 2 questions in parallel)
   if python3 - <<PY
 import json
 import pickle
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from reason import reason
 from reason_full import evaluate_answer
@@ -112,7 +113,8 @@ if results_path.exists():
     except json.JSONDecodeError:
         existing_results = {}
 
-for qa in video_questions:
+def process_question(qa):
+    """Process a single question and return (question_id, result_dict)"""
     question_id = qa["question_id"]
     question = qa["question"]
     ground_truth = qa["answer"]
@@ -133,9 +135,9 @@ for qa in video_questions:
         reason_result["type"] = qa_type
         reason_result["before_clip"] = before_clip
 
-        existing_results[question_id] = reason_result
+        return (question_id, reason_result)
     except Exception as e:
-        existing_results[question_id] = {
+        return (question_id, {
             "error": str(e),
             "video_name": video_name,
             "question": question,
@@ -145,7 +147,23 @@ for qa in video_questions:
             "type": qa_type,
             "before_clip": before_clip,
             "evaluator_correct": False,
-        }
+        })
+
+# Process questions in parallel (2 at a time)
+new_results = {}
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = {executor.submit(process_question, qa): qa for qa in video_questions}
+    
+    completed = 0
+    for future in as_completed(futures):
+        question_id, result = future.result()
+        new_results[question_id] = result
+        completed += 1
+        if completed % 5 == 0:
+            print(f"  Processed {completed}/{len(video_questions)} questions...")
+
+# Update existing_results with new results (preserving results from other videos)
+existing_results.update(new_results)
 
 results_path.parent.mkdir(parents=True, exist_ok=True)
 with open(results_path, "w", encoding="utf-8") as f:

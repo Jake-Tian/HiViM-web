@@ -34,12 +34,17 @@ def search_with_parse(query, graph, parse_query_response):
 
     # Extract strategy components with safe access
     triple = strategy_dict.get("query_triple")
+    triples = strategy_dict.get("query_triples")
     spatial_constraint = strategy_dict.get("spatial_constraint")
     speaker_strict = strategy_dict.get("speaker_strict")
     allocation = strategy_dict.get("allocation", {})
 
-    if not triple:
-        raise ValueError("query_triple not found in strategy")
+    if triples and isinstance(triples, list):
+        query_triples = triples
+    elif triple:
+        query_triples = [triple]
+    else:
+        raise ValueError("query_triple(s) not found in strategy")
 
     # Get k values from allocation, with defaults as fallback
     k_high_level = allocation.get("k_high_level", 10)
@@ -49,11 +54,11 @@ def search_with_parse(query, graph, parse_query_response):
     # Search the graph
     try:
         # Search high-level edges
-        high_level_edges = graph.search_high_level_edges(triple, k_high_level)
+        high_level_edges = graph.search_high_level_edges(query_triples, k_high_level)
         
         # Search low-level edges
         low_level_edges = graph.search_low_level_edges(
-            triple, 
+            query_triples, 
             k_low_level,
             spatial_constraint
         )

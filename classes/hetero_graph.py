@@ -532,7 +532,8 @@ class HeteroGraph:
             seen_edges.add(edge_key)
             
             # Create and add edge
-            edge = Edge(clip_id=clip_id, source=source_node_name, target=target_node_name, content=edge_content, scene=scene)
+            scene_embedding = get_embedding(scene)
+            edge = Edge(clip_id=clip_id, source=source_node_name, target=target_node_name, content=edge_content, scene=scene, scene_embedding=scene_embedding)
             try:
                 self.add_edge(edge)
             except ValueError as e:
@@ -969,10 +970,10 @@ class HeteroGraph:
             if not char_name.startswith("<") or not char_name.endswith(">"):
                 char_name = f"<{char_name}>"
             
-            # Verify character exists in graph
+            # Add character to graph if it doesn't exist (characters mentioned in conversations may not have appeared in behaviors yet)
             if char_name not in self.characters:
-                print(f"Warning: Character '{char_name}' not found in graph, skipping attribute: {attribute}")
-                continue
+                self.add_character(char_name)
+                print(f"Info: Added character '{char_name}' to graph from conversation summary")
             
             # Create attribute edge (high-level edge: clip_id=0, scene=None)
             edge = Edge(
@@ -1010,13 +1011,13 @@ class HeteroGraph:
             if not char2.startswith("<") or not char2.endswith(">"):
                 char2 = f"<{char2}>"
             
-            # Verify both characters exist in graph
+            # Add characters to graph if they don't exist (characters mentioned in conversations may not have appeared in behaviors yet)
             if char1 not in self.characters:
-                print(f"Warning: Character '{char1}' not found in graph, skipping relationship")
-                continue
+                self.add_character(char1)
+                print(f"Info: Added character '{char1}' to graph from conversation summary")
             if char2 not in self.characters:
-                print(f"Warning: Character '{char2}' not found in graph, skipping relationship")
-                continue
+                self.add_character(char2)
+                print(f"Info: Added character '{char2}' to graph from conversation summary")
             
             # Create relationship edge (high-level edge: clip_id=0, scene=None)
             edge = Edge(
@@ -1342,7 +1343,7 @@ class HeteroGraph:
         for edge in candidate_edges:
             score = 0.0
             
-            # Match against each query triple using embeddings
+            # Match against each query triple using embeddings (use max across triples)
             for i, q_triple in enumerate(query_triples):
                 if q_triple is None:
                     continue
@@ -1352,31 +1353,19 @@ class HeteroGraph:
                 q_content_weight = q_triple[4] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 4 and q_triple[4] is not None else 1.0
                 q_target_weight = q_triple[5] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 5 and q_triple[5] is not None else 1.0
                 
-                # Normalize weights to sum to 1.0
-                total_weight = q_source_weight + q_content_weight + q_target_weight
-                if total_weight > 0:
-                    q_source_weight_norm = q_source_weight / total_weight
-                    q_content_weight_norm = q_content_weight / total_weight
-                    q_target_weight_norm = q_target_weight / total_weight
-                else:
-                    q_source_weight_norm = 0.33
-                    q_content_weight_norm = 0.34
-                    q_target_weight_norm = 0.33
-                
-                # Prepare query triple with normalized weights
+                # Prepare query triple with provided weights (no normalization)
                 query_triple_with_weights = [
                     q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None,
                     q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None,
                     q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None,
-                    q_source_weight_norm,
-                    q_content_weight_norm,
-                    q_target_weight_norm
+                    q_source_weight,
+                    q_content_weight,
+                    q_target_weight
                 ]
                 
-                # Compute similarity (edge cases handled in _compute_edge_similarity)
                 query_embeddings = query_triple_embeddings[i]
                 triple_score = self._compute_edge_similarity(edge, query_triple_with_weights, query_embeddings)
-                score += triple_score
+                score = max(score, triple_score)
             
             # Add confidence score if available
             if hasattr(edge, 'confidence') and edge.confidence:
@@ -1480,25 +1469,14 @@ class HeteroGraph:
                 q_content_weight = q_triple[4] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 4 and q_triple[4] is not None else 1.0
                 q_target_weight = q_triple[5] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 5 and q_triple[5] is not None else 1.0
                 
-                # Normalize weights to sum to 1.0
-                total_weight = q_source_weight + q_content_weight + q_target_weight
-                if total_weight > 0:
-                    q_source_weight_norm = q_source_weight / total_weight
-                    q_content_weight_norm = q_content_weight / total_weight
-                    q_target_weight_norm = q_target_weight / total_weight
-                else:
-                    q_source_weight_norm = 0.25
-                    q_content_weight_norm = 0.5
-                    q_target_weight_norm = 0.25
-                
-                # Prepare query triple with normalized weights
+                # Prepare query triple with provided weights (no normalization)
                 query_triple_with_weights = [
                     q_triple[0] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 0 else None,
                     q_triple[1] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 1 else None,
                     q_triple[2] if isinstance(q_triple, (list, tuple)) and len(q_triple) > 2 else None,
-                    q_source_weight_norm,
-                    q_content_weight_norm,
-                    q_target_weight_norm
+                    q_source_weight,
+                    q_content_weight,
+                    q_target_weight
                 ]
                 
                 # Compute similarity (edge cases handled in _compute_edge_similarity)
@@ -1510,7 +1488,10 @@ class HeteroGraph:
             scene_sim = 1.0  # Default to 1.0 if no spatial constraint (no penalty)
             if spatial_embedding and edge.scene:
                 try:
-                    edge_scene_emb = get_embedding(edge.scene)
+                    if getattr(edge, "scene_embedding", None) is not None:
+                        edge_scene_emb = edge.scene_embedding
+                    else:
+                        edge_scene_emb = get_embedding(edge.scene)
                     scene_sim = self._cosine_similarity(spatial_embedding, edge_scene_emb)
                 except Exception:
                     # Fallback to substring match
