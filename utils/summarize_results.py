@@ -170,7 +170,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize results.json correctness and watch stats.")
     parser.add_argument(
         "--input",
-        default="data/results/result.json",
+        default="data/results/results.json",
         help="Path to results.json (default: data/results/results.json)",
     )
     parser.add_argument(
