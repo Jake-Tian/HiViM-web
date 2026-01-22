@@ -50,6 +50,7 @@ test.sh
 # Analysis documents (local only, not for GitHub)
 error_analysis.md
 location_improvement_suggestions.md
+REASONING_PROCESS.md
 
 # Log files (local only, not for GitHub)
 test.log
