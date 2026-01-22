@@ -39,7 +39,7 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         key=lambda x: int(Path(x).name)
     )
 
-    image_folders = image_folders[:2] # Comment this out to process all clips
+    # image_folders = image_folders[:2] # Comment this out to process all clips
     
     character_appearance = "{}"
     previous_conversation = False
@@ -261,7 +261,7 @@ def main():
     else:
         selected = video_names
     
-    selected = ["kitchen_21"] # Comment this out to process all videos
+    # selected = ["kitchen_21"] # Comment this out to process all videos
 
     for video_name in selected:
         try:
