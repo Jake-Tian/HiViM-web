@@ -53,3 +53,6 @@ location_improvement_suggestions.md
 
 # Log files (local only, not for GitHub)
 test.log
+
+# Local scripts (local only, not for GitHub)
+process_graph.py
