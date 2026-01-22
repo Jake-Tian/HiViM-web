@@ -259,7 +259,7 @@ For each attribute, you should also provide a confidence score between 0 and 100
 If the confidence score is less than 50, you should not include the attribute in the output.
 
 Output a JSON dictionary (key: attribute, value: confidence score). 
-Example: {"student": 90, "enthusiastic": 80, "likes to read": 70, "professional": 50}
+Example: {"student": 90, "enthusiastic": 80, "likes to read": 70, "professional": 50, "likes to play games": 60}
 """
 
 
@@ -540,9 +540,9 @@ Input format:
   Applies to both low-level actions and conversation messages.
   Example: [1] Anna walk. (ping-pong room) means this occurred during clip 1 (0-30 seconds).
 
-Decision criteria: 
+**Decision criteria**: 
 1. Answer directly ([Answer]) when the current graph information provides a clear answer to the question. You should make reasonable deductions and inferences from the available information when appropriate. If the information is sufficient to answer the question (even if not explicitly stated verbatim), choose [Answer].
-2. Search video memory ([Search]) only when the extracted information is fundamentally insufficient and cannot support a reasonable answer through deduction.
+2. Search video memory ([Search]) when the extracted information is insufficient or ambiguous and cannot support a reasonable answer through deduction.
 
 Output format: 
 Action: [Answer] or [Search]
@@ -556,6 +556,32 @@ If the action is [Search]:
 If the action is [Answer]:
 - **Content**: Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do NOT include additional explanations or context beyond what is necessary to answer the question.
 - Do not include a Summary field.
+
+Special types of questions:
+1. Spatial/Location questions (questions asking "where" or "which place"): 
+  - Only choose [Answer] if the location information includes specific furniture, containers, or precise spatial relationships. Generic room names alone are INSUFFICIENT.
+  - If the location information is generic (e.g., "kitchen", "office", "living room"), choose [Search].
+  - If the action is [Search]:
+    - Provide a list of video clip IDs (as integers) ranked by relevance: [clip_id1, clip_id2, ...]. 
+    - Include the clips where the actions occured, and the clips before and after the actions if neccessary. 
+    - Focus the summary on object locations, character actions involving the object, spatial relationships and temporal sequences. Exclude irrelevant information such as character attributes, relationships, and conversations.
+
+2. Temporal Sequence questions (questions asking about event order, sequence, "first", "before", "after", "should X be done first", "what happened before/after X", etc.):
+  - Only choose [Answer] if the graph clearly shows the temporal sequence with sufficient detail (e.g., clip IDs show clear sequence).
+  - If the temporal sequence is unclear, ambiguous, or missing key events, choose [Search].
+  - **Distinguish**: "Should X be done first?" asks about INSTRUCTIONS/intended order, while "What happened before/after X?" asks about ACTUAL sequence.
+  - If the action is [Search]:
+    - **Clip selection priority**: Focus on clips BEFORE or AFTER the key action/event based on the temporal context of the question. If information is insufficient, prioritize clips that occur BEFORE the key action.
+    - **Summary format**: MUST clearly indicate temporal information with explicit clip IDs. Format: "In clip [X], [character/event] [action]." Use this format for each relevant event in chronological order.
+    - Focus the summary on events in chronological order with explicit clip IDs, character actions and their sequence, and what happened before/after the key action. Exclude irrelevant information.
+
+3. Counting questions (questions asking "how many", "how many times", "how many pieces", "how many kinds", etc.):
+  - Only choose [Answer] if the graph provides explicit counts or if all occurrences can be clearly enumerated from the graph information.
+  - If counts are vague, incomplete, or if multiple occurrences might be missed, choose [Search].
+  - If the action is [Search]:
+    - **Clip selection**: Include ALL clips where the mentioned event takes place. Also include clip IDs between two mentioned events if necessary to ensure no counting is missed during the information storage step.
+    - **Summary format**: MUST clearly indicate counts per clip with explicit clip IDs. Format: "In clip [X], [character/event] [action] [count]." Example: "In clip 18, A did something once; in clip 20, A did something twice."
+    - Focus the summary on enumerating each occurrence with its clip ID and count, ensuring all events are accounted for. Exclude irrelevant information.
 
 Examples:
 
@@ -571,98 +597,134 @@ Output:
 Action: [Answer]
 Content: Anna decided to drink water before the game.
 
-Question: Where did Anna and Susan have their conversation about the game?
-Extracted information: High-level: (no location attributes found) Low-level: [10] Anna walks to ping-pong room. [12] Anna and Susan stand in ping-pong room. Conversations: Conversation 1: Anna and Susan discuss their upcoming game. [Clip 12]
+Question: What happened after Alice received the gift?
+Extracted information: High-level: (no sequence information) Low-level: [15] Bob gives Alice wrapped gift box. [16] Alice unwraps gift box. [17] Alice reads book. Conversations: (no relevant conversations)
 Output:
 Action: [Answer]
-Content: In the ping-pong room.
+Content: After receiving the gift, Alice unwrapped it and then read the book.
 
-Question: What was the exact expression on Anna's face when she received the gift?
-Extracted information: High-level: (no facial expression information) Low-level: [15] Bob gives Anna wrapped gift box. [16] Anna unwraps gift box. Conversations: (no relevant conversations)
+Question: Where is the book Lucky read just now?
+Extracted information: High-level: (no location information) Low-level: [8] Lucky reads book. (bedroom) [9] Lucky places book. (bedroom) Conversations: (no relevant conversations)
 Output:
 Action: [Search]
-Content: [15, 16]
-Summary: The graph shows Bob giving Anna a wrapped gift box at clip 15, and Anna unwrapping it at clip 16. However, the graph does not contain information about Anna's specific facial expression or micro-expressions, which requires visual analysis of the video frames.
+Content: [8, 9, 7]
+Summary: The graph shows Lucky reading a book at clip 8 and placing it at clip 9, both in the bedroom. However, the specific location within the bedroom (e.g., which furniture or surface) is not captured in the graph. In clip 8, Lucky reads the book. In clip 9, Lucky places the book. The exact placement location (e.g., bedside table, desk, shelf) requires visual inspection of the video frames.
 
-Question: Why did Alice suddenly leave in the middle of the conversation?
-Extracted information: High-level: Alice talks to Bob (75) Low-level: [20] Alice walks out of kitchen. Conversations: Conversation 3: Alice and Bob discuss work topics. The conversation ends at clip 19. [Clip 19]
+Question: Should the balloons be put up first?
+Extracted information: High-level: (no sequence instructions) Low-level: [10] Betty instructs to put up balloons. (living room) [12] Betty and Linda write message on balloons. (living room) [14] Betty and Linda put up balloons. (living room) Conversations: (no relevant conversations)
 Output:
 Action: [Search]
-Content: [20, 19, 21, 18]
-Summary: The graph shows Alice leaving the kitchen at clip 20, and a conversation with Bob ending at clip 19. However, the specific reason for Alice's sudden departure is not captured in the extracted information - the conversation content and context leading to the departure are unclear and require viewing the video.
+Content: [10, 12, 14, 11, 13]
+Summary: The graph shows multiple events but the temporal sequence is unclear. In clip 10, Betty instructs to put up balloons. In clip 12, Betty and Linda write message on balloons. In clip 14, Betty and Linda put up balloons. However, the graph does not clearly indicate whether the instruction in clip 10 specifies the order, or what happens before putting up the balloons. The sequence requires visual verification to determine the intended order.
+
+Question: How many times was the air-conditioning remote used?
+Extracted information: High-level: (no count information) Low-level: [8] Robot uses air-conditioning remote. (meeting room) [11] Robot uses air-conditioning remote. (meeting room) Conversations: (no relevant conversations)
+Output:
+Action: [Search]
+Content: [8, 11, 9, 10]
+Summary: The graph shows the air-conditioning remote being used at clip 8 and clip 11. However, to ensure accurate counting and verify no uses were missed between these clips, all clips from 8 to 11 should be checked. In clip 8, the remote was used once; in clip 11, the remote was used once. Clips 9-10 are included to ensure no counting is missed during the information storage step.
 """
 
 
 prompt_video_answer = """
 You are given a 30-second video clip represented as sequential frames (pictures in chronological order) and a question.
 
-**Important**: You may also receive summaries from previous video clips that have already been watched. These summaries contain information from earlier clips and are provided to help answer questions that require information spanning multiple video clips. When evaluating whether you can answer the question, consider BOTH the current video clip AND the previous summaries together.
-
-**Special Instructions for Counting Questions**: If the question asks about counting occurrences (e.g., "How many times...", "How many pieces...", "How many..."), you MUST watch ALL provided video clips (up to 5 clips) to ensure accurate counting. Do NOT answer early even if you see some occurrences - you must continue to [Search] through all clips to get the complete count. When providing summaries for counting questions, explicitly list each occurrence you observe so the count can be accumulated across all clips.
+**Important**: 
+- You may also receive summaries from previous video clips that have already been watched. These summaries contain information from earlier clips and are provided to help answer questions that require information spanning multiple video clips.
+- You will receive the current clip ID. Use this to reference which clip you are watching.
+- When evaluating whether you can answer the question, consider BOTH the current video clip AND the previous summaries together.
 
 Your task is to evaluate whether the current video clip (combined with any previous summaries) contains sufficient information to answer the question.
 
-Decision criteria:
+**DECISION CRITERIA**:
+
 1. **Answer directly ([Answer])** when:
-   - The current video (possibly combined with previous summaries) clearly shows the answer to the question
-   - All necessary information is available from the current clip and/or previous summaries
-   - The answer is unambiguous and complete
-   - **Exception**: For counting questions, continue to [Search] through all provided clips unless you have already watched all clips
-   - Example: Question asks "What color is Alice's shirt?" and the current video clearly shows Alice wearing a red shirt
-   - Example: Question asks "What happened after Alice received the gift?" and the current video shows the answer, even though previous summaries showed her receiving it
+- The current video (possibly combined with previous summaries) clearly shows the COMPLETE answer to the question
+- All necessary information is available from the current clip and/or previous summaries
+- The answer is unambiguous and complete
+- **EXCEPTION**: For counting questions, [Answer] is NOT ALLOWED until the last clip. See "SPECIAL QUESTION TYPES" below.
 
 2. **Search next video ([Search])** when:
-   - The current video AND previous summaries together are still missing critical information
-   - The answer requires events that occur in clips not yet watched
-   - The information is ambiguous or unclear even when combining current video with previous summaries
-   - The video shows partial information but key details are still missing after considering previous summaries
-   - **For counting questions**: Continue to [Search] through all provided clips, explicitly listing each occurrence observed in your summary
-   - Example: Question asks "Why did Alice leave?" and the current video shows Alice leaving, but neither the current video nor previous summaries show what caused her to leave
-   - Example: Question asks "How many times did X happen?" - continue searching through all clips, listing each occurrence
+- The current video AND previous summaries together are still missing critical information
+- The answer requires events that occur in clips not yet watched
+- The information is ambiguous or unclear even when combining current video with previous summaries
+- The video shows partial information but key details are still missing after considering previous summaries
+- **REQUIRED**: For counting questions, you MUST use [Search] for all clips except the last clip. See "SPECIAL QUESTION TYPES" below.
 
-Output format:
+**OUTPUT FORMAT**:
 Action: [Answer] or [Search]
 Content: <your answer here> or <summary of what the video shows>
 
-- If Action is [Answer]: Provide a concise, direct answer in ONE SENTENCE based on the current video and/or previous summaries. Be brief and to the point. Do not include additional explanations or context beyond what is necessary to answer the question.
-- If Action is [Search]: Provide a summary describing what the current video shows. This summary will be passed to the next video clip. Focus on key events, characters, objects, or actions that might be relevant for answering the question. **For counting questions**: Explicitly list each occurrence you observe in this clip (e.g., "In this clip, X happened once at timestamp Y"). This helps accumulate the count across all clips.
+If Action is [Answer]:
+- Provide a concise, direct answer in ONE SENTENCE based on the current video and/or previous summaries.
+- Be brief and to the point. Do not include additional explanations or context beyond what is necessary to answer the question.
+
+If Action is [Search]:
+- Provide a summary describing what the current video shows. This summary will be passed to the next video clip.
+- MUST include the current clip ID in your summary.
+- Focus on key events, characters, objects, or actions that might be relevant for answering the question.
+
+**SPECIAL QUESTION TYPES**:
+1. **Spatial/Location Questions** (questions asking "where", "which place", or about object placement):
+- When to [Answer]: Only if you can see the SPECIFIC location (e.g., "on the coffee table", "in the left cabinet", "below the dressing table"). Generic room names alone are INSUFFICIENT unless the question specifically asks "which room".
+- When to [Search]: If you only see generic locations (e.g., "bedroom", "kitchen") or if the specific placement is unclear.
+- Summary format: Focus on object locations, character actions involving the object, and spatial relationships. Include clip ID: "In clip [X], [object] is [location/action]."
+
+2. **Temporal Sequence Questions** (questions asking "first", "before", "after", "should X be done first", "what happened before/after X"):
+- When to [Answer]: Only if you have seen the complete sequence with clear chronological order from previous summaries and current clip.
+- When to [Search]: If the sequence is unclear, missing key events, or if you need to see more clips to determine the order.
+- Critical Distinction: 
+  - "Should X be done first?" = Look for INSTRUCTIONS/intended order
+  - "What happened before/after X?" = Look for ACTUAL sequence of events
+- Summary format: Clearly indicate temporal information with explicit clip IDs. Format: "In clip [X], [character/event] [action]." List events in chronological order.
+
+3. **Counting Questions** (questions asking "how many", "how many times", "how many pieces", "how many kinds"):
+- CRITICAL: You MUST watch ALL provided video clips (up to 5 clips) to ensure accurate counting. Do NOT answer early even if you see some occurrences - you must continue to [Search] through all clips to get the complete count.
+- [Answer] is NOT ALLOWED for counting questions.
+- [Search] is ALWAYS used for counting questions until you reach the last clip. Continue searching through all clips, explicitly listing each occurrence observed.
+- Summary format: MUST clearly indicate counts per clip with explicit clip IDs. Format: "In clip [X], [event] occurred [count] time(s)." Example: "In clip 8, the remote was used once; in clip 11, the remote was used once."
 
 Examples:
 
-Question: Who is Alice talking to in this clip?
-Previous summaries: None (first clip)
-Video shows: Alice and Bob having a conversation in the kitchen
+Question: Where is the book Lucky read just now?
+Current clip ID: 9
+Previous summaries: Clip 8: Lucky reads a book in the bedroom.
+Video shows: Lucky placing the book on the bedside table
 Output:
 Action: [Answer]
-Content: Alice is talking to Bob.
+Content: The book is on the bedside table.
 
-Question: Why did Alice leave the room?
-Previous summaries: Clip 1: Alice and Bob are discussing a project in the office. Clip 2: Bob suggests taking a break.
-Video shows: Alice walking out of the kitchen, but no clear reason visible
+Question: Where is the book Lucky read just now?
+Current clip ID: 9
+Previous summaries: Clip 8: Lucky reads a book in the bedroom.
+Video shows: Lucky placing the book, but the specific furniture is not clearly visible
 Output:
 Action: [Search]
-Content: Alice walks out of the kitchen. The reason for leaving is still unclear from the current video and previous summaries.
+Content: In clip 9, Lucky places the book in the bedroom, but the specific location (which furniture or surface) is not clearly visible in this clip.
 
-Question: What did Alice do after receiving the gift?
-Previous summaries: Clip 1: Bob gives Alice a wrapped gift box. Clip 2: Alice unwraps the gift and sees it's a book.
+Question: What happened after Alice received the gift?
+Current clip ID: 17
+Previous summaries: Clip 15: Bob gives Alice a wrapped gift box. Clip 16: Alice unwraps the gift and sees it's a book.
 Video shows: Alice reading the book and thanking Bob
 Output:
 Action: [Answer]
-Content: Alice read the book and thanked Bob.
+Content: After receiving the gift, Alice unwrapped it, read the book, and thanked Bob.
 
-Question: What is Bob holding?
+Question: Should the balloons be put up first?
+Current clip ID: 10
 Previous summaries: None (first clip)
-Video shows: Bob clearly holding a red coffee cup
-Output:
-Action: [Answer]
-Content: Bob is holding a red coffee cup.
-
-Question: What did Alice say to Bob when she first saw him today?
-Previous summaries: Clip 1: Alice enters the room and sees Bob.
-Video shows: Alice's mouth moving but no subtitles or clear audio
+Video shows: Betty instructing to put up balloons, but the instruction doesn't specify the order
 Output:
 Action: [Search]
-Content: Alice appears to be speaking to Bob, but the conversation content is unclear from the video. The previous summary indicates this is when Alice first saw Bob.
+Content: In clip 10, Betty instructs to put up balloons, but the instruction does not clearly specify whether balloons should be put up first or if other steps should come before.
+
+Question: How many times was the air-conditioning remote used?
+Current clip ID: 11
+Previous summaries: Clip 8: The air-conditioning remote was used once. Clip 9: No remote usage. Clip 10: No remote usage.
+Video shows: Robot uses the air-conditioning remote once
+Output:
+Action: [Search]
+Content: In clip 11, the air-conditioning remote was used once. Total so far: clip 8 (once), clip 11 (once). Need to verify if this is the last clip.
 """
 
 
@@ -688,13 +750,31 @@ Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do 
 prompt_video_answer_final = """
 You are given a 30-second video represented as sequential frames (pictures in chronological order) and a question. 
 
-Your task is to answer the question based on the video and the previous video summaries. If the given information is insufficient or missing critical details, you can make reasonable guess. 
+**Important**: 
+- This is the LAST clip you will watch. You must provide a final answer based on ALL information available.
+- You will receive the current clip ID. Use this to reference which clip you are watching.
+- You will receive summaries from all previous video clips that have already been watched. These summaries contain information from earlier clips.
+- Consider BOTH the current video clip AND all previous summaries together when answering.
 
-**Special Instructions for Counting Questions**: If the question asks about counting occurrences (e.g., "How many times...", "How many pieces...", "How many..."), carefully review ALL previous summaries to count ALL occurrences across all watched clips. Make sure to count each occurrence only once and provide the total count.
+Your task is to answer the question based on the current video and ALL previous video summaries. If the given information is insufficient or missing critical details, you can make reasonable inferences.
 
-**Important**: Provide a concise answer in ONE SENTENCE. Be brief and to the point.
+**SPECIAL QUESTION TYPES**:
 
-Only output the answer, with no additional explanation.
+1. **Counting Questions** (questions asking "how many", "how many times", "how many pieces", "how many kinds"):
+- CRITICAL: This is the ONLY clip where counting questions can be answered.
+- Carefully review ALL previous summaries to count ALL occurrences across all watched clips.
+- Make sure to count each occurrence only once and provide the total count.
+- Example: If previous summaries show "Clip 8: remote used once; Clip 11: remote used once", the answer is "The remote was used twice."
+
+2. **Spatial/Location Questions** (questions asking "where", "which place"):
+- Review all previous summaries and current clip to determine the specific location.
+- If previous summaries only show generic locations, use the current clip to identify the specific placement.
+
+3. **Temporal Sequence Questions** (questions asking "first", "before", "after", "should X be done first"):
+- Review all previous summaries and current clip to determine the complete sequence.
+- Distinguish between instructions ("should X be done first?") and actual sequence ("what happened before/after X?").
+
+**Output**: Provide a concise answer in ONE SENTENCE. Be brief and to the point. Only output the answer, with no additional explanation.
 """
 
 

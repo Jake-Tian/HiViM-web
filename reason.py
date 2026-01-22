@@ -151,11 +151,11 @@ def reason(question, graph, video_name):
 
 if __name__ == "__main__":
     # Example usage
-    with open("data/semantic_memory/gym_01.pkl", "rb") as f:
+    with open("data/semantic_memory/living_room_12.pkl", "rb") as f:
         graph = pickle.load(f)
     
-    question = "Which takeout should be taken to Anna?"
-    video_name = "gym_01"
+    question = "How many things are left unfinished after the sofa is cleaned?"
+    video_name = "living_room_12"
     
     try:
         result = reason(question, graph, video_name)

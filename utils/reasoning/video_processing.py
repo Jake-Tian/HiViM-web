@@ -48,6 +48,7 @@ def process_video_clip(clip_id, question, previous_summaries, frames_dir, is_las
         # For the last clip, use prompt_video_answer_final
         prompt_parts = [prompt_video_answer_final]
         prompt_parts.append(f"\n\nQuestion: {question}")
+        prompt_parts.append(f"\n\nCurrent clip ID: {clip_id}")
         
         if previous_summaries:
             summaries_text = "\n".join(previous_summaries)
@@ -60,6 +61,7 @@ def process_video_clip(clip_id, question, previous_summaries, frames_dir, is_las
         # For non-last clips, use prompt_video_answer with Action/Content format
         prompt_parts = [prompt_video_answer]
         prompt_parts.append(f"\n\nQuestion: {question}")
+        prompt_parts.append(f"\n\nCurrent clip ID: {clip_id}")
         
         if previous_summaries:
             summaries_text = "\n".join(previous_summaries)
