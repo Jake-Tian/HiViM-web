@@ -1,4 +1,5 @@
 import pickle
+from pathlib import Path
 from utils.llm import generate_text_response
 from utils.prompts import prompt_semantic_video, prompt_parse_query
 from utils.search import search_with_parse
@@ -80,8 +81,8 @@ def reason(question, graph, video_name):
         # Search the graph with parsed query
         graph_search_results = search_with_parse(question, graph, parse_query_response)
         result['graph_search_results'] = graph_search_results
-        print("\nGraph Search Results:")
-        print(graph_search_results)
+        # print("\nGraph Search Results:")
+        # print(graph_search_results)
         
     except Exception as e:
         raise Exception(f"Error searching graph: {e}")
@@ -117,8 +118,20 @@ def reason(question, graph, video_name):
     # Extract clip IDs from content
     clip_ids = extract_clip_ids(parsed['content'])
     if not clip_ids:
-        raise ValueError(f"Could not extract clip IDs from content: {parsed['content']}")
-    
+        # Fallback: use the first clip in data/frames/{video_name} and answer with prompt_video_answer_final
+        frames_dir = Path(f"data/frames/{video_name}")
+        if not frames_dir.exists():
+            raise ValueError(f"Could not extract clip IDs from content: {parsed['content']} and frames directory not found: {frames_dir}")
+        subdirs = sorted(
+            [d.name for d in frames_dir.iterdir() if d.is_dir()],
+            key=lambda x: int(x) if str(x).isdigit() else x
+        )
+        if not subdirs:
+            raise ValueError(f"Could not extract clip IDs from content: {parsed['content']} and no clip folders in {frames_dir}")
+        first_clip = int(subdirs[0]) if str(subdirs[0]).isdigit() else subdirs[0]
+        clip_ids = [first_clip]
+        print(f"No clip IDs in content; using first clip from frames: {clip_ids} (will use final-answer prompt)")
+
     print(f"\n[Step 3] Watching video clips: {clip_ids}")
     
     # Watch video clips

@@ -9,7 +9,7 @@ from classes.hetero_graph import HeteroGraph
 from utils.llm import generate_text_response
 from utils.mllm_pictures import generate_messages, get_response
 from utils.prompts import prompt_generate_episodic_memory, prompt_extract_triples
-from utils.general import strip_code_fences, load_video_list, Tee
+from utils.general import strip_code_fences, parse_json_with_repair, update_character_appearance_keys, Tee
 
 
 def process_full_video(frames_dir, output_graph_path=None, output_episodic_memory_path=None):
@@ -41,12 +41,10 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
 
     # image_folders = image_folders[:2] # Comment this out to process all clips
     
-    character_appearance = "{}"
+    character_appearance = {}
     previous_conversation = False
     episodic_memory = dict()
     graph = HeteroGraph()
-    # Track final character appearance across all clips
-    final_character_appearance = {}
     
     for folder in image_folders:
         try:
@@ -63,25 +61,25 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             #--------------------------------
             # Episodic Memory
             #--------------------------------
-            # Safety check: ensure character_appearance is always a string for prompt construction
-            if isinstance(character_appearance, dict):
-                character_appearance_str = json.dumps(character_appearance, indent=2)
-            elif isinstance(character_appearance, str):
-                character_appearance_str = character_appearance
-            else:
-                print(f"Warning: character_appearance has unexpected type {type(character_appearance)}, defaulting to empty dict")
-                character_appearance_str = "{}"
-            
+            # Convert character_appearance dict to string for prompt
+            character_appearance_str = json.dumps(character_appearance, indent=2)
             prompt = "Character appearance from previous videos: \n" + character_appearance_str + "\n" + prompt_generate_episodic_memory
             messages = generate_messages(current_images, prompt)
-            try:
-                response = get_response(messages)
-            except Exception as e:
-                print(f"LLM call failed, retrying... Error: {e}")
-                response = get_response(messages)
-            # print(response)
-            response = strip_code_fences(response)
-            response_dict = json.loads(response)
+            max_episodic_retries = 2
+            response_dict = None
+            for attempt in range(max_episodic_retries):
+                try:
+                    response = get_response(messages)
+                except Exception as e:
+                    print(f"LLM call failed, retrying... Error: {e}")
+                    response = get_response(messages)
+                parsed, err = parse_json_with_repair(response, expect_dict=True)
+                if err is None:
+                    response_dict = parsed
+                    break
+                print(f"Episodic memory JSON parse failed (attempt {attempt + 1}/{max_episodic_retries}): {err}")
+                if attempt + 1 == max_episodic_retries:
+                    raise ValueError(f"Could not parse episodic memory JSON after {max_episodic_retries} attempts") from err
 
             # 1. Process the character's behavior
             behaviors = response_dict.get("characters_behavior", [])
@@ -96,12 +94,13 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
                 else:
                     print(f"Warning: Malformed equivalence line '{behaviors[0]}', skipping rename")
 
-            # 2. Process the character appearance
-            character_appearance = response_dict.get("character_appearance", {})
-            if not isinstance(character_appearance, dict):
-                print(f"Warning: character_appearance is not a dictionary, got {type(character_appearance)}")
-                character_appearance = {}
-            final_character_appearance.update(character_appearance)
+            # 2. Process the character appearance - merge new appearances into existing dict
+            new_character_appearance = response_dict.get("character_appearance", {})
+            if not isinstance(new_character_appearance, dict):
+                print(f"Warning: character_appearance is not a dictionary, got {type(new_character_appearance)}")
+                new_character_appearance = {}
+            # Merge new appearances into the accumulated dictionary
+            character_appearance.update(new_character_appearance)
 
             # 3. Process the conversation
             conversation = response_dict.get("conversation", [])
@@ -114,6 +113,14 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
                 try:
                     print(f"Extracting summary for completed conversation {graph.current_conversation_id}...")
                     result = graph.extract_conversation_summary(graph.current_conversation_id)
+                    
+                    # Update character appearance dictionary keys for renamed characters
+                    renamed_characters = result.get("renamed_characters", [])
+                    if renamed_characters:
+                        for character_id, character_name in renamed_characters:
+                            update_character_appearance_keys(character_appearance, character_id, character_name)
+                            print(f"✓ Updated character appearance keys: {character_id} → {character_name}")
+                    
                     print(f"✓ Conversation summary extracted. Attributes: {len(result['character_attributes'])}, Relationships: {len(result['characters_relationships'])}")
                 except Exception as e:
                     print(f"✗ Error extracting conversation summary: {e}")
@@ -138,22 +145,24 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
                 except Exception as e:
                     print(f"LLM call failed, retrying... Error: {e}")
                     triples_response = generate_text_response(behavior_prompt)
-                triples_response = strip_code_fences(triples_response)
-                triples = json.loads(triples_response)
-            else: 
+                triples, triples_err = parse_json_with_repair(triples_response, expect_dict=False)
+                if triples_err is not None:
+                    print(f"Triples JSON parse failed: {triples_err}, using empty list")
+                    triples = []
+                if not isinstance(triples, list):
+                    triples = []
+            else:
                 triples = []
             # Pass character_appearance to insert_triples for matching and merging
             graph.insert_triples(triples, clip_id, scene, character_appearance=character_appearance)
             print(f"Inserted {len(triples)} triples into graph for clip {clip_id}")
-            
-            character_appearance = json.dumps(character_appearance)
 
-            # Store episodic memory for this clip
+            # Store episodic memory for this clip (convert to string for JSON storage)
             episodic_memory[clip_id] = {
                 "folder": folder,
                 "characters_behavior": behaviors,
                 "conversation": conversation,
-                "character_appearance": character_appearance,
+                "character_appearance": json.dumps(character_appearance, indent=2),
                 "scene": scene,
                 "triples": triples
             }
@@ -161,12 +170,6 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             print(f"✗ Error processing folder {folder}: {e}")
             traceback.print_exc()
             print("Continuing to next folder...")
-            # Safety: ensure character_appearance is converted to string even after exception
-            # to prevent TypeError on next iteration
-            if isinstance(character_appearance, dict):
-                character_appearance = json.dumps(character_appearance, indent=2)
-            elif not isinstance(character_appearance, str):
-                character_appearance = "{}"
             continue
 
     # Extract summary for any remaining active conversation at the end
@@ -174,15 +177,23 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         try:
             print(f"Extracting summary for final conversation {graph.current_conversation_id}...")
             result = graph.extract_conversation_summary(graph.current_conversation_id)
+            
+            # Update character appearance dictionary keys for renamed characters
+            renamed_characters = result.get("renamed_characters", [])
+            if renamed_characters:
+                for character_id, character_name in renamed_characters:
+                    update_character_appearance_keys(character_appearance, character_id, character_name)
+                    print(f"✓ Updated character appearance key: {character_id} → {character_name}")
+            
             print(f"✓ Final conversation summary extracted. Attributes: {len(result['character_attributes'])}, Relationships: {len(result['characters_relationships'])}")
         except Exception as e:
             print(f"✗ Error extracting final conversation summary: {e}")
             traceback.print_exc()
 
     # Insert character appearances as high-level edges
-    if final_character_appearance:
+    if character_appearance:
         try:
-            graph.insert_character_appearances(final_character_appearance)
+            graph.insert_character_appearances(character_appearance)
         except Exception as e:
             print(f"✗ Error inserting character appearances: {e}")
             traceback.print_exc()
@@ -236,11 +247,11 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         pickle.dump(graph, f)
 
     # Save the episodic memory to a JSON file
-    # output_episodic_memory_path = Path(output_episodic_memory_path)
-    # output_episodic_memory_path.parent.mkdir(parents=True, exist_ok=True)
-    # with open(output_episodic_memory_path, "w") as f:
-    #     json.dump(episodic_memory, f, indent=2)
-    # print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
+    output_episodic_memory_path = Path(output_episodic_memory_path)
+    output_episodic_memory_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_episodic_memory_path, "w") as f:
+        json.dump(episodic_memory, f, indent=2)
+    print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
     
     return graph, episodic_memory
 
@@ -252,18 +263,9 @@ def main():
     log_file = open("log.txt", "w", encoding="utf-8")
     sys.stdout = Tee(log_file)
     
-    video_names = load_video_list()
-    
-    # Parse range from command line (e.g., "1-20" or "21-40")
-    if len(sys.argv) > 1:
-        start, end = map(int, sys.argv[1].split('-'))
-        selected = video_names[start-1:end]
-    else:
-        selected = video_names
-    
-    # selected = ["kitchen_21"] # Comment this out to process all videos
+    video_list = ["Efk3K4epEzg"]
 
-    for video_name in selected:
+    for video_name in video_list:
         try:
             start_time = time.time()
             frames_dir = Path(f"data/frames/{video_name}")

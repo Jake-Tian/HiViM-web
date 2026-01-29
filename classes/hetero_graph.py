@@ -22,11 +22,6 @@ class HeteroGraph:
         # adjacency lists for O(1) search
         self.adjacency_list_out = defaultdict(list)  # node → list of edge IDs (outgoing edges)
         self.adjacency_list_in = defaultdict(list)   # node → list of edge IDs (incoming edges)
-
-        robot = CharacterNode("<robot>")
-        self.characters[robot.name] = robot
-
-
     # --------------------------------------------------------
     # Node API
     # --------------------------------------------------------
@@ -55,6 +50,7 @@ class HeteroGraph:
         1. Updates the character's name in self.characters
         2. Updates all edges where this character appears as source or target
         3. Updates adjacency lists accordingly
+        4. Updates all conversations where this character appears as speaker
         
         Args:
             old_name: Current character name in format <character_X> (e.g., "<character_1>")
@@ -121,6 +117,24 @@ class HeteroGraph:
             edge_ids_in = self.adjacency_list_in.pop(old_name)
             self.adjacency_list_in[new_name_stored] = edge_ids_in
         
+        # 5. Update all conversations where this character appears as speaker
+        for conversation_id, conversation in self.conversations.items():
+            updated = False
+            # Update speaker in all messages
+            for msg in conversation.messages:
+                if isinstance(msg, list) and len(msg) >= 1 and msg[0] == old_name:
+                    msg[0] = new_name_stored
+                    updated = True
+            
+            # Update speakers set
+            if old_name in conversation.speakers:
+                conversation.speakers.remove(old_name)
+                conversation.speakers.add(new_name_stored)
+                updated = True
+            
+            if updated:
+                print(f"Info: Updated conversation {conversation_id} to use '{new_name_stored}' instead of '{old_name}'")
+        
         return True
     
     def get_node_degrees(self):
@@ -184,7 +198,7 @@ class HeteroGraph:
         self.objects[name] = obj_node
         
         return (name, name)
-
+    
 
     # --------------------------------------------------------
     # Conversation API
@@ -223,13 +237,9 @@ class HeteroGraph:
                     speaker = msg[0]
                     content = msg[1]
                     # Generate embedding for the message using text-embedding-3-small
-                    # Remove angle brackets from speaker name for embedding: "<Alice>" -> "Alice"
-                    speaker_name = speaker
-                    if speaker_name.startswith("<") and speaker_name.endswith(">"):
-                        speaker_name = speaker_name[1:-1]
-                    formatted_msg = f"{speaker_name}: {content}"
+                    # Use content only (not speaker name) to avoid embedding mismatch when characters are renamed
                     try:
-                        embedding = get_embedding(formatted_msg)
+                        embedding = get_embedding(content)
                     except Exception as e:
                         print(f"Warning: Failed to get embedding for message, using None: {e}")
                         embedding = None
@@ -325,7 +335,7 @@ class HeteroGraph:
             self.adjacency_list_in[None].append(edge.id)
 
         return edge.id
-    
+
     def add_high_level_edge(self, edge):
         """
         Add a high-level edge (clip_id=0) with duplicate checking.
@@ -395,8 +405,8 @@ class HeteroGraph:
         best_similarity = 0.0
         
         for existing_char_name in self.characters:
-            # Only consider <character_X> for removal (not named characters, not robot)
-            if not existing_char_name.startswith("<character_") or existing_char_name == "<robot>":
+            # Only consider <character_X> for removal (not named characters)
+            if not existing_char_name.startswith("<character_"):
                 continue
             
             # Get appearance for existing character
@@ -902,7 +912,12 @@ class HeteroGraph:
             conversation_id: ID of the conversation to process
         
         Returns:
-            dict: Dictionary with keys "summary", "character_attributes", "characters_relationships"
+            dict: Dictionary with keys:
+                - "name_equivalences": List of name equivalence pairs from LLM
+                - "renamed_characters": List of (character_id, character_name) tuples for successful renames
+                - "summary": Conversation summary string
+                - "character_attributes": List of character attributes
+                - "characters_relationships": List of character relationships
         """
         # Get the conversation
         conversation = self.conversations.get(conversation_id)
@@ -912,6 +927,8 @@ class HeteroGraph:
         if not conversation.messages:
             # No messages, return empty results
             return {
+                "name_equivalences": [],
+                "renamed_characters": [],
                 "summary": "",
                 "character_attributes": [],
                 "characters_relationships": []
@@ -939,15 +956,42 @@ class HeteroGraph:
             print(f"Failed to parse LLM response as JSON: {e}")
             print(f"Response was: {response}")
             return {
+                "name_equivalences": [],
+                "renamed_characters": [],
                 "summary": "",
                 "character_attributes": [],
                 "characters_relationships": []
             }
         
-        # Extract the three components
+        # Extract the four components
+        name_equivalences = result_dict.get("name_equivalences", [])
         summary = result_dict.get("summary", "")
         character_attributes = result_dict.get("character_attributes", [])
         characters_relationships = result_dict.get("characters_relationships", [])
+        
+        # Process name equivalences and rename characters
+        renamed_characters = []  # List of (character_id, character_name) tuples for successful renames
+        if name_equivalences:
+            print(f"Found {len(name_equivalences)} name equivalence(es)")
+            for equiv in name_equivalences:
+                if isinstance(equiv, list) and len(equiv) >= 2:
+                    character_id = equiv[0]  # e.g., "<character_1>"
+                    character_name = equiv[1]  # e.g., "<Alice>"
+                    
+                    # Ensure character_name has angle brackets (it should already)
+                    if not character_name.startswith("<") or not character_name.endswith(">"):
+                        character_name = f"<{character_name}>"
+                    
+                    # Extract plain name for rename_character (it expects plain text)
+                    character_name_plain = character_name.strip("<>")
+                    
+                    # Rename character (this updates edges, conversations, etc.)
+                    success = self.rename_character(character_id, character_name_plain)
+                    if success:
+                        print(f"✓ Renamed {character_id} to {character_name}")
+                        renamed_characters.append((character_id, character_name))
+                    else:
+                        print(f"⚠ Failed to rename {character_id} to {character_name}")
         
         # Update conversation.summary
         conversation.summary = summary
@@ -1035,6 +1079,8 @@ class HeteroGraph:
                 print(f"Warning: Failed to add relationship edge between {char1} and {char2}: {e}")
         
         return {
+            "name_equivalences": name_equivalences,
+            "renamed_characters": renamed_characters,
             "summary": summary,
             "character_attributes": character_attributes,
             "characters_relationships": characters_relationships
@@ -1277,7 +1323,7 @@ class HeteroGraph:
         # Return the maximum of normal and reversed directions plus content similarity
         return content_sim + max(normal_q_source_sim + normal_q_target_sim, reversed_q_source_sim + reversed_q_target_sim)
 
-
+    
     def search_high_level_edges(self, query_triples, k):
         """
         Search for top-k high-level edges (clip_id=0, scene=None) using embedding-based similarity.
@@ -1577,12 +1623,8 @@ class HeteroGraph:
                         message_embedding = message[3]  # Use stored embedding from message (pre-computed)
                     else:
                         # Fallback: compute embedding if not stored (shouldn't happen normally)
-                        # Remove angle brackets from speaker name for embedding consistency
-                        speaker_name = speaker
-                        if speaker_name.startswith("<") and speaker_name.endswith(">"):
-                            speaker_name = speaker_name[1:-1]
-                        formatted_message = f"{speaker_name}: {content}"
-                        message_embedding = get_embedding(formatted_message)
+                        # Use content only (not speaker name) for consistency with embedding generation
+                        message_embedding = get_embedding(content)
                     
                     text_similarity = self._cosine_similarity(query_embedding, message_embedding)
                 except Exception:

@@ -62,12 +62,12 @@ def find_pkl_files(semantic_memory_dir="data/semantic_memory"):
     return video_names
 
 
-def load_questions(json_path="data/questions/robot.json"):
+def load_questions(json_path="data/web.json"):
     """
-    Load questions from robot.json file.
-    
+    Load questions from web.json file.
+
     Args:
-        json_path: Path to the robot.json file
+        json_path: Path to the web.json file
     
     Returns:
         dict: Dictionary with video names as keys and question lists as values
@@ -95,8 +95,7 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     """
     # Find all videos with .pkl files
     print("Finding available videos...")
-    # available_videos = find_pkl_files()
-    available_videos = ["living_room_03", "study_15", "bedroom_10", "meeting_room_03", "living_room_12", "bedroom_02", "office_02", "gym_04", "study_02"]
+    available_videos = find_pkl_files()
     print(f"Found {len(available_videos)} videos: {sorted(available_videos)}")
     
     # Load questions

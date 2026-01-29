@@ -10,35 +10,37 @@ Your tasks:
      (a) Interaction with objects in the scene.
      (b) Interaction with other characters.
      (c) Actions and movements.
+     (d) Information from visible text/OCR: If text is visible in the video frames (signs, labels, documents, screens, etc.), include relevant information extracted from that text in the behavior descriptions. For example: "reads document showing price $25,000", "looks at sign that says 'Pawn Shop'", "views screen displaying signature authentication results".
    - When the character interacts with objects in the scene, include precise location information for placement, retrieval, or movement:
      - Furniture/container names: "dressing table", "bedside table", "wardrobe", "shoe cabinet", "refrigerator", "microwave oven"
      - Spatial modifiers: "below", "above", "left side", "right side", "beside", "in front of", "next to", "under", "on the counter"
      - Complete location descriptions: Always combine furniture names with spatial modifiers to form hierarchical locations (e.g., "cabinet below the dressing table", "second layer of the refrigerator", "cabinet on the left side of the wardrobe"). For retrieval actions, include source locations (e.g., "takes towel from Susan's bag", "gets mask from cabinet below dressing table")
+   - **Character naming**: If a character's name is known from previous context or conversation (e.g., "Alice", "Rick", "Bob"), use that name with angle brackets (e.g., "<Alice>", "<Rick>"). Otherwise, use character IDs (e.g., "<character_1>", "<character_2>"). Use the same naming consistently throughout behaviors and conversation.
    - Each entry must describe exactly one event/detail. Split sentences if needed.
    - Output format: Python list of strings.
 
 2. **Conversation**
    - Record the dialogue based on subtitles.
-   - Always use characters' real name existed in the subtitle. 
+   - **Character naming**: If a character's name is mentioned in the conversation or known from previous context, use that name with angle brackets (e.g., "<Alice>", "<Rick>"). Otherwise, refer to characters as <character_1>, <character_2>, etc. starting from 1. When a new character appears, assign the next available number.
+   - If there's subtitle but no character can be detected (narration or character out of picture), refer to them as <character_0>.
    - Output format: List of two-element lists [character, content].
 
 3. **Character Appearance**
    - Describe each character's appearance: facial features, clothing, body shape, hairstyle, or other distinctive characteristics.
    - Each characteristic should be concise, separated by commas.
    - **Character Matching Rules** (MUST follow before creating new characters):
-     1. **Check ALL previously seen characters** (both known names like <Anna>, <Susan> AND unknown like <character_1>, <character_2>) from ALL earlier clips.
+     1. **Check ALL previously seen characters** (like <character_1>, <character_2>, or named characters like <Alice>, <Rick>) from ALL earlier clips.
      2. **Compare appearance** focusing on:
         - **Stable features**: Body shape, facial structure, skin tone, general build
         - **Variable features** (may change): Hair length/style, clothing, accessories, glasses
         - **Distinctive combinations**: Unique feature combinations that identify a person
      3. **Match if**: Person matches based on stable features and distinctive combinations, even if variable features changed.
      4. **If match found**:
-        - Known character: Use that name directly (e.g., <Anna>)
-        - Unknown character: Add "Equivalence: <character_X>, <Anna>" at **start of characters_behavior**
+        - Use existing character identifier (e.g., <character_1> or <Alice> if name is known)
         - Do NOT create new character_appearance entry
      5. **Only create new character** if NO match found after thorough comparison:
-        - If name mentioned in conversation: Use that name
-        - Otherwise: Create <character_X> with lowest available number
+        - If character name is known from conversation or context, use that name (e.g., <Alice>)
+        - Otherwise, create <character_X> with lowest available number starting from 1
    - **Existing characters**: Update if changes observed (hair, clothing), enhance if new details visible, otherwise keep unchanged. Keep appearance info even if character leaves scene.
    - **Minimize total characters**: Goal is MINIMUM unique characters. When in doubt, match to existing rather than creating new.
    - Output format: Python dictionary {<character>: appearance information}.
@@ -47,12 +49,8 @@ Your tasks:
    - Output format: Python string.
 
 Special Rules:
-- Use angle brackets to represent characters eg. <Alice>, <Bob>, <robot> etc.
-- Include the robot (<robot>) if present:
-  - It wears black gloves and has no visible face (it holds the camera).
-  - Describe its behavior and conversation.
-  - Do NOT include robot in character appearance information, but include it in characters_behavior and conversation.
-- All characters' name mentioned in behaviors and conversation must exists in character appearance. 
+- Use angle brackets to represent characters. If a character's name is known (from conversation or previous context), use the name (e.g., <Alice>, <Rick>). Otherwise, use character IDs (e.g., <character_1>, <character_2>).
+- All characters mentioned in behaviors and conversation must exist in character appearance.
 - Maintain strict chronological order.
 - Avoid repetition in both behavior and conversation.
 - If no behavior or conversation is observed, return an empty list for characters_behavior and conversation.
@@ -61,20 +59,22 @@ Example Output:
 Return a Python dictionary with exactly four keys:
 {
     "characters_behavior": [
-        "<Alice> enters the room.", 
-        "<Alice> takes cap from the cabinet on the left side of the wardrobe.", 
-        "<Alice> sits with <Bob> side by side on the couch.", 
-        "<Bob> watches TV.", 
-        "<robot> puts the coffee on the table."
+        "<Alice> enters the room.",
+        "<Alice> takes cap from the cabinet on the left side of the wardrobe.",
+        "<Alice> reads document showing price $25,000.",
+        "<Alice> sits with <Bob> side by side on the couch.",
+        "<Bob> watches TV.",
+        "<character_3> looks at sign that says 'Pawn Shop'."
     ],
     "conversation": [
-        ["<Alice>", "Hello, my name is Alice."], 
+        ["<Alice>", "Hello, my name is Alice."],
         ["<Bob>", "Hi, I'm Bob. Nice to meet you."]
-    ], 
+    ],
     "character_appearance": {
-      "<Alice>": "female, fat, ponytail, wear glasses, short-sleeved shirt, blue jeans, white sneakers", 
-      "<Bob>": "male, thin, short hair, no glasses, black jacket, black pants, black shoes"
-    }, 
+      "<Alice>": "female, fat, ponytail, wear glasses, short-sleeved shirt, blue jeans, white sneakers",
+      "<Bob>": "male, thin, short hair, no glasses, black jacket, black pants, black shoes",
+      "<character_3>": "male, tall, brown hair, blue shirt"
+    },
     "scene": "bedroom"
 }
 
@@ -83,7 +83,7 @@ Checklist:
 - [ ] Dictionary has exactly 4 keys: "characters_behavior", "conversation", "character_appearance", "scene".
 - [ ] No duplicate or repetitive entries in behavior or conversation.
 """
-
+ 
 
 prompt_extract_triples = """
 You are given a list of **action sentences** describing character behavior.  
@@ -185,7 +185,7 @@ Examples:
 - If an action implies a **resulting state**, add a state triple.
 - Preserve complete location phrases as single entities in target fields. 
 Examples:
-- "<robot> puts coffee on table" → ["<robot>", "puts", "coffee"], ["coffee", "is on", "table"]
+- "<character_1> puts coffee on table" → ["<character_1>", "puts", "coffee"], ["coffee", "is on", "table"]
 - "<Alice> takes towel from Susan's bag" → ["<Alice>", "takes", "towel"], ["towel", "is in", "Susan's bag"]
 
 9. DEDUPLICATION
@@ -201,7 +201,7 @@ If unsure, output a **minimal transformation**:
 Input:
 [
   "<Michael> pats <Susan>'s shoulder and smiles.",
-  "<robot> places the red cup on the counter.",
+  "<character_1> places the red cup on the counter.",
   "<Lisa> dances and sings happily.",
   "<John> takes his wallet and keys from the drawer."
 ]
@@ -210,7 +210,7 @@ Output:
 [
   ["<Michael>", "pats shoulder", "<Susan>"],
   ["<Michael>", "smiles", null],
-  ["<robot>", "places", "red cup"],
+  ["<character_1>", "places", "red cup"],
   ["red cup", "is on", "counter"],
   ["<Lisa>", "dances happily", null],
   ["<Lisa>", "sings happily", null],
@@ -237,7 +237,7 @@ The input consists of multiple clips, each with:
 - Include key actions, character interactions, and scene transitions
 - Use natural, flowing language (not a bulleted list)
 - Focus on the main narrative flow and significant events
-- Keep character names as provided (e.g., <character_1>, <robot>)
+- Keep character names as provided (e.g., <character_1>, <character_2>)
 - Do not include clip numbers or scene labels in the summary
 - There might be conflict or misleading information provided, you should be able to handle it and provide a coherent summary.
 
@@ -292,13 +292,21 @@ You are given a conversation between several characters.
 
 Your tasks: 
 
-1. **Summary**
+1. **Name Equivalence**
+- Some characters' names are unknown. They are referred to by character IDs (e.g., <character_1>, <character_2>, etc.).
+- If you can infer the actual name of a character from the conversation (e.g., they introduce themselves, others call them by name), add an equivalence mapping.
+- Output format: JSON array of arrays. Each inner array: [character_id, character_name].
+  - character_id: The character ID with angle brackets (e.g., "<character_1>")
+  - character_name: The inferred name WITH angle brackets (e.g., "<Alice>")
+- If no names can be inferred, return an empty array: []
+
+2. **Summary**
 - Summarize the key topics, decisions, or outcomes discussed in the conversation.
 - Write 2-4 concise sentences covering the main themes and important points.
 - Focus on what was discussed and decided, not on individual statements.
 - Output format: JSON string value.
 
-2. **Character Attributes**
+3. **Character Attributes**
 - Extract each character's attributes revealed through their dialogue and interaction style.
 - Focus on: personality traits, role/profession, interests, background information (when mentioned).
 - **DO NOT** include:
@@ -309,9 +317,9 @@ Your tasks:
 - Output format: JSON array of arrays. Each inner array: [character, attribute, confidence_score].
 - Confidence scores range from 0-100. Only include attributes with confidence >= 50.
 - Avoid redundant or overly similar attributes (e.g., don't include both "friendly" and "kind" unless distinctly different).
-- Use angle brackets for character names (e.g., "<Alice>", "<Bob>").
+- **Character naming**: If a name equivalence was detected in the name_equivalences section, use the inferred name with angle brackets (e.g., "<Alice>"). Otherwise, if the character name is still unknown, use the character ID (e.g., "<character_1>") as it appears in the conversation.
 
-3. **Character Relationships**
+4. **Character Relationships**
 - Extract abstract relationships between characters based on their dialogue interactions.
 - Include: roles (friends, colleagues, teacher-student, etc.), attitudes (respect, dislike, etc.), 
   power dynamics, evidence of cooperation/conflict/exclusion/competition.
@@ -323,17 +331,20 @@ Your tasks:
 - Confidence scores range from 0-100. Only include relationships with confidence >= 50.
 - Do not generate symmetric duplicates (if "<Alice> respects <Bob>" is included, don't automatically include reverse unless explicitly different).
 - It is acceptable to generate only a few relationships if there is insufficient information.
+- **Character naming**: If a name equivalence was detected in the name_equivalences section, use the inferred name with angle brackets (e.g., "<Alice>"). Otherwise, if the character name is still unknown, use the character ID (e.g., "<character_1>") as it appears in the conversation.
 
 ### EDGE CASES
 - If conversation has only one character speaking: focus on their attributes, skip relationships.
 - If conversation is empty or unclear: return empty arrays for attributes and relationships, provide a brief summary noting the issue.
-- If character names are ambiguous: use the names as provided in the conversation.
+- If character names are ambiguous: use the character IDs as provided in the conversation.
+- If no character names can be inferred: return an empty array for name_equivalences.
 
 ### OUTPUT FORMAT
-Return a JSON dictionary with exactly three keys: "summary", "character_attributes", "characters_relationships".
+Return a JSON dictionary with exactly four keys: "name_equivalences", "summary", "character_attributes", "characters_relationships".
 
 ### EXAMPLE OUTPUT
 {
+  "name_equivalences": [["<character_1>", "<Alice>"], ["<character_2>", "<Bob>"]],
   "summary": "Alice and Bob discussed their upcoming project. They agreed on a timeline and assigned tasks. Bob expressed concerns about the deadline, which Alice addressed by suggesting additional resources.",
   "character_attributes": [
     ["<Alice>", "organized", 85],
@@ -347,8 +358,26 @@ Return a JSON dictionary with exactly three keys: "summary", "character_attribut
   ]
 }
 
+Note: In the example above, since name equivalences were detected (<character_1> → <Alice>, <character_2> → <Bob>), the inferred names are used in character_attributes and characters_relationships. If no name equivalence was found for a character, use the character ID (e.g., "<character_3>") instead.
+
+### EXAMPLE OUTPUT (No Name Equivalences)
+{
+  "name_equivalences": [],
+  "summary": "The characters discussed their plans for the weekend. They agreed to meet on Saturday.",
+  "character_attributes": [
+    ["<character_1>", "enthusiastic", 85],
+    ["<character_2>", "cautious", 75]
+  ],
+  "characters_relationships": [
+    ["<character_1>", "plans with", "<character_2>", 80]
+  ]
+}
+
+Note: In this example, no name equivalences were detected, so character IDs are used throughout.
+
 ### BAD EXAMPLE (What NOT to do)
 {
+  "name_equivalences": [],
   "summary": "The conversation is about the characters' attributes and relationships.",
   "character_attributes": [
     ["<Alice>", "asked a question", 90],  // WRONG: This is an action, not an attribute
@@ -411,7 +440,7 @@ Given a query and budget `k=50`, output:
   - "where is X now?" → Use triple `[X, "is at", "?", ...]` with high weight on X. The search should prioritize the most recent state edges (highest clip_id).
   - "last time" / "last place" → Use triple `[X, "is at", "?", ...]` and prioritize edges with highest clip_id values.
   - "where should X be placed?" → Use triple `[X, "should be placed at", "?", ...]` or `[X, "is placed at", "?", ...]` to find placement instructions.
-- **Source location queries**: "where can robot get X?" / "where did X get Y from?" → Use triple `[X, "gets", "Y", ...]` or `[Y, "is in", "?", ...]` to find source locations. Include a helper triple if needed: `[Y, "is from", "?", ...]`.
+- **Source location queries**: "where can character get X?" / "where did X get Y from?" → Use triple `[X, "gets", "Y", ...]` or `[Y, "is in", "?", ...]` to find source locations. Include a helper triple if needed: `[Y, "is from", "?", ...]`.
 - **Allocation for location queries**: Prioritize low-level edges (35-45) since they contain spatial information. Use conversations (5-10) only if placement instructions might be mentioned in dialogue.
 
 2. **Allocation** `{k_high_level, k_low_level, k_conversations}`:
@@ -432,8 +461,8 @@ Given a query and budget `k=50`, output:
 ```json
 {
   "query_triples": [["<Anna>", "relationship", "<Susan>", 0.95, 0.2, 0.95]],
-  "spatial_constraint": null,
-  "speaker_strict": null,
+  "spatial_constraint": null, 
+  "speaker_strict": null, 
   "allocation": {"k_high_level": 10, "k_low_level": 10, "k_conversations": 30, "total_k": 50, "reasoning": "Relationship query - use high-level for relationships, conversations for evidence"}
 }
 ```
@@ -442,8 +471,8 @@ Given a query and budget `k=50`, output:
 ```json
 {
   "query_triples": [["<Emma>", "?", "coffee", 0.95, 0.15, 0.9]],
-  "spatial_constraint": "kitchen",
-  "speaker_strict": null,
+  "spatial_constraint": "kitchen", 
+  "speaker_strict": null, 
   "allocation": {"k_high_level": 5, "k_low_level": 38, "k_conversations": 7, "total_k": 50, "reasoning": "Action query - prioritize low-level edges"}
 }
 ```
@@ -452,7 +481,7 @@ Given a query and budget `k=50`, output:
 ```json
 {
   "query_triples": [["<Emily>", "discusses", "<David>", 0.9, 0.3, 0.9]],
-  "spatial_constraint": null,
+  "spatial_constraint": null, 
   "speaker_strict": ["<Emily>", "<David>"],
   "allocation": {"k_high_level": 2, "k_low_level": 3, "k_conversations": 45, "total_k": 50, "reasoning": "Dialogue query - prioritize conversations with specific speakers"}
 }
@@ -475,8 +504,8 @@ Given a query and budget `k=50`, output:
 ```json
 {
   "query_triples": [["tape", "is at", "?", 0.8, 0.5, 0.15]],
-  "spatial_constraint": null,
-  "speaker_strict": null,
+  "spatial_constraint": null, 
+  "speaker_strict": null, 
   "allocation": {"k_high_level": 2, "k_low_level": 42, "k_conversations": 6, "total_k": 50, "reasoning": "Temporal-spatial query - 'now' means most recent location. Prioritize low-level edges with highest clip_id to find current state"}
 }
 ```
@@ -540,9 +569,15 @@ Input format:
   Applies to both low-level actions and conversation messages.
   Example: [1] Anna walk. (ping-pong room) means this occurred during clip 1 (0-30 seconds).
 
+**Character Naming**:
+- Character names may not be identifiable when processing the video. Characters may be referred to using generic identifiers such as <character_1>, <character_2>, <character_3>, etc.
+- When answering questions, you must make reasonable deductions based on the available information, even if characters are not explicitly named.
+- Use context clues from actions, relationships, conversations, and attributes to identify which character is being referenced in the question.
+- If a question asks about a specific name (e.g., "Anna") but the graph only shows <character_1>, use the available information (attributes, actions, relationships) to determine if <character_1> matches the queried character and answer accordingly.
+
 **Decision criteria**: 
-1. Answer directly ([Answer]) when the current graph information provides a clear answer to the question. You should make reasonable deductions and inferences from the available information when appropriate. If the information is sufficient to answer the question (even if not explicitly stated verbatim), choose [Answer].
-2. Search video memory ([Search]) when the extracted information is insufficient or ambiguous and cannot support a reasonable answer through deduction.
+1. Answer directly ([Answer]) when the current graph information provides a clear answer or supports a reasonable inference. You MUST make deductions from behavior, reactions, stated interest, and implications — not only from literal statements. If the information is sufficient to answer (even if not explicitly stated), choose [Answer]. Do NOT choose [Search] solely because the answer is "not explicitly indicated."
+2. Search video memory ([Search]) only when the extracted information is genuinely insufficient or ambiguous and cannot support any reasonable inference (e.g., no relevant behavior, no stated interest, no implied preference). When summarizing for [Search], note any inferable evidence (e.g., "Rick shows strong interest in the Led Zeppelin album") so downstream answer stages can use it.
 
 Output format: 
 Action: [Answer] or [Search]
@@ -636,19 +671,25 @@ You are given a 30-second video clip represented as sequential frames (pictures 
 
 Your task is to evaluate whether the current video clip (combined with any previous summaries) contains sufficient information to answer the question.
 
+**INFERENCE FROM CONTEXT** (apply to all question types):
+- When the question asks what is "indicated", "shown", "favorite", "suggests", "demonstrates", or "as shown in the video", infer from **behavior, reactions, stated interest, enthusiasm, and implications** — not only from literal statements.
+- Prefer [Answer] when you can give a reasonable, evidence-based inference (e.g., someone keeps an item for themselves → infer it is their favorite; someone praises or shows strong interest → infer preference).
+- Do NOT refuse to answer solely because the answer is "not explicitly stated." Use implied evidence to answer when it is the last clip.
+
 **DECISION CRITERIA**:
 
 1. **Answer directly ([Answer])** when:
 - The current video (possibly combined with previous summaries) clearly shows the COMPLETE answer to the question
-- All necessary information is available from the current clip and/or previous summaries
-- The answer is unambiguous and complete
+   - All necessary information is available from the current clip and/or previous summaries
+   - The answer is unambiguous and complete, OR you can reasonably infer it from behavior, reactions, or context
 - **EXCEPTION**: For counting questions, [Answer] is NOT ALLOWED until the last clip. See "SPECIAL QUESTION TYPES" below.
 
 2. **Search next video ([Search])** when:
-- The current video AND previous summaries together are still missing critical information
-- The answer requires events that occur in clips not yet watched
-- The information is ambiguous or unclear even when combining current video with previous summaries
-- The video shows partial information but key details are still missing after considering previous summaries
+   - The current video AND previous summaries together are still missing critical information
+   - The answer requires events that occur in clips not yet watched
+   - The information is ambiguous or unclear even when combining current video with previous summaries
+   - The video shows partial information but key details are still missing after considering previous summaries
+   - AND you cannot make a reasonable inference from behavior or context (e.g., no one has shown interest, no implied preference)
 - **REQUIRED**: For counting questions, you MUST use [Search] for all clips except the last clip. See "SPECIAL QUESTION TYPES" below.
 
 **OUTPUT FORMAT**:
@@ -748,20 +789,15 @@ Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do 
 
 
 prompt_video_answer_final = """
-You are given a 30-second video represented as sequential frames (pictures in chronological order) and a question. 
+You are given a 30-second video (sequential frames) and a question. This is the LAST clip; give a final answer using the current clip and all previous summaries.
 
-**Important**: 
-- This is the LAST clip you will watch. You must provide a final answer based on ALL information available.
-- You will receive the current clip ID. Use this to reference which clip you are watching.
-- You will receive summaries from all previous video clips that have already been watched. These summaries contain information from earlier clips.
-- Consider BOTH the current video clip AND all previous summaries together when answering.
+**Context**: This is the last clip. You have the current clip ID, the current clip frames, and summaries from all previous clips. Use the current clip and all summaries together to answer.
 
-Your task is to answer the question based on the current video and ALL previous video summaries. If the given information is insufficient or missing critical details, you can make reasonable inferences.
+**Requirement**:
+You MUST give a concrete answer. Refusals (e.g. "information is insufficient", "I don't know", "cannot determine", "not explicitly indicated", "the video does not show") are NOT acceptable. If uncertain, make a reasonable guess from the available information.
 
 **SPECIAL QUESTION TYPES**:
-
 1. **Counting Questions** (questions asking "how many", "how many times", "how many pieces", "how many kinds"):
-- CRITICAL: This is the ONLY clip where counting questions can be answered.
 - Carefully review ALL previous summaries to count ALL occurrences across all watched clips.
 - Make sure to count each occurrence only once and provide the total count.
 - Example: If previous summaries show "Clip 8: remote used once; Clip 11: remote used once", the answer is "The remote was used twice."
@@ -774,7 +810,11 @@ Your task is to answer the question based on the current video and ALL previous 
 - Review all previous summaries and current clip to determine the complete sequence.
 - Distinguish between instructions ("should X be done first?") and actual sequence ("what happened before/after X?").
 
-**Output**: Provide a concise answer in ONE SENTENCE. Be brief and to the point. Only output the answer, with no additional explanation.
+Checklist: 
+- [ ] The answer is in one sentence and under 20 words.
+- [ ] The answer is a direct, concrete statement—not a refusal to answer (e.g. "insufficient information", "I don't know", "cannot determine", "not explicitly indicated", or "the video does not show" is NOT ACCEPTABLE).
+
+**Output**: One sentence, under 20 words. Only the answer; no explanation.
 """
 
 

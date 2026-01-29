@@ -29,7 +29,7 @@ class Conversation:
             clip_id: ID of the clip these messages belong to
         
         Messages will be converted to [speaker, content, clip_id, embedding] format (4 elements).
-        Embeddings are generated using text-embedding-3-small model.
+        Embeddings are generated using text-embedding-3-small model, using content only (not speaker name).
         Deduplication is based on (speaker, content) pair.
         """
         if not messages:
@@ -53,13 +53,9 @@ class Conversation:
                     existing_messages.add(msg_tuple)
                     
                     # Generate embedding for the message using text-embedding-3-small
-                    # Remove angle brackets from speaker name for embedding: "<Alice>" -> "Alice"
-                    speaker_name = speaker
-                    if speaker_name.startswith("<") and speaker_name.endswith(">"):
-                        speaker_name = speaker_name[1:-1]
-                    formatted_msg = f"{speaker_name}: {content}"
+                    # Use content only (not speaker name) to avoid embedding mismatch when characters are renamed
                     try:
-                        embedding = get_embedding(formatted_msg)
+                        embedding = get_embedding(content)
                     except Exception as e:
                         print(f"Warning: Failed to get embedding for message, using None: {e}")
                         embedding = None

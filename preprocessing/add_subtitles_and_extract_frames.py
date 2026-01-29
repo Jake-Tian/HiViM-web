@@ -1,6 +1,7 @@
 """
 Add subtitles to video and extract one frame per second with subtitles.
 Saves frames to data/frames/{video_name}/{second}/ directory structure.
+python -m preprocessing.add_subtitles_and_extract_frames
 """
 
 import cv2
@@ -8,6 +9,86 @@ import re
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Tuple
+import tempfile
+import subprocess
+import os
+from whisper_subtitles import extract_subtitles_from_video
+
+
+def check_video_codec(video_path: Path) -> str:
+    """Check the video codec using ffprobe."""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams',
+            '-select_streams', 'v:0', str(video_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0:
+            import json
+            data = json.loads(result.stdout)
+            streams = data.get('streams', [])
+            if streams:
+                codec_name = streams[0].get('codec_name', 'unknown')
+                return codec_name.lower()
+    except Exception:
+        pass
+    return 'unknown'
+
+
+def convert_video_for_compatibility(video_path: Path) -> Path:
+    """
+    Convert AV1 or other incompatible videos to H.264 for better OpenCV compatibility.
+
+    Returns the path to the converted video (or original if no conversion needed).
+    """
+    codec = check_video_codec(video_path)
+
+    # Convert AV1 and other potentially problematic codecs
+    if codec in ['av1', 'vp8', 'vp9']:
+        print(f"Video codec is {codec}, converting to H.264 for better compatibility...")
+
+        # Create temporary file for converted video
+        temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        temp_video.close()
+
+        try:
+            # Convert to H.264 using FFmpeg
+            cmd = [
+                'ffmpeg', '-i', str(video_path),
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-movflags', '+faststart',
+                '-y', temp_video.name
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"✓ Video converted successfully to {temp_video.name}")
+                return Path(temp_video.name)
+            else:
+                print(f"✗ Video conversion failed: {result.stderr}")
+                # Clean up failed conversion
+                if os.path.exists(temp_video.name):
+                    os.unlink(temp_video.name)
+
+        except Exception as e:
+            print(f"✗ Video conversion error: {e}")
+            if os.path.exists(temp_video.name):
+                os.unlink(temp_video.name)
+
+    # Return original path if no conversion needed or conversion failed
+    return video_path
+
+
+def cleanup_temp_video(video_path: Path, original_path: Path):
+    """Clean up temporary converted video files."""
+    if video_path != original_path and video_path.exists():
+        try:
+            video_path.unlink()
+            print(f"Cleaned up temporary video: {video_path}")
+        except Exception:
+            pass
 
 
 def parse_srt_file(srt_path: Path) -> List[Dict[str, any]]:
@@ -188,27 +269,49 @@ def draw_subtitle_on_frame(frame: np.ndarray, subtitle_text: str,
     return frame
 
 
-def process_video_with_subtitles(video_path: Path, srt_path: Path, 
+def process_video_with_subtitles(video_path: Path,
                                   output_frames_dir: Path,
-                                  frames_per_second: int = 1):
+                                  frames_per_second: int = 1,
+                                  whisper_model: str = "small.en",
+                                  use_whisper: bool = True,
+                                  srt_path: Path = None):
     """
     Process video: extract one frame per second and add subtitles.
-    
+
     Args:
         video_path: Path to input video
-        srt_path: Path to SRT subtitle file
         output_frames_dir: Directory to save frames (e.g., data/frames/bedroom_01)
         frames_per_second: Number of frames to extract per second (default: 1)
+        whisper_model: Whisper model to use if use_whisper=True (default: "small.en")
+        use_whisper: Whether to use Whisper for subtitle extraction (default: True)
+        srt_path: Path to SRT subtitle file (only used if use_whisper=False)
     """
-    # Parse subtitles
-    print(f"Parsing subtitle file: {srt_path}")
-    subtitles = parse_srt_file(srt_path)
-    print(f"Found {len(subtitles)} subtitle entries")
-    
-    # Open video
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Could not open video: {video_path}")
+    # Extract subtitles
+    if use_whisper:
+        print("Extracting subtitles using Whisper...")
+        subtitles = extract_subtitles_from_video(video_path, whisper_model)
+    else:
+        if srt_path is None:
+            raise ValueError("srt_path must be provided when use_whisper=False")
+        print(f"Parsing subtitle file: {srt_path}")
+        subtitles = parse_srt_file(srt_path)
+        print(f"Found {len(subtitles)} subtitle entries")
+
+    # Convert video if needed for compatibility
+    original_video_path = video_path
+    video_path = convert_video_for_compatibility(video_path)
+
+    try:
+        # Open video
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+
+        print(f"Video opened successfully: {cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}")
+    except Exception as e:
+        # Clean up any temp file if video opening failed
+        cleanup_temp_video(video_path, original_video_path)
+        raise
     
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -275,72 +378,104 @@ def process_video_with_subtitles(video_path: Path, srt_path: Path,
         frame_count += 1
     
     cap.release()
+
+    # Clean up temporary video file if it was converted
+    cleanup_temp_video(video_path, original_video_path)
+
     print(f"\n✓ Extracted {frames_saved} frames to {output_frames_dir}")
     return frames_saved
 
 
 def main():
-    """Process videos with matching subtitle files.
-    
+    """Process videos and extract frames with subtitles using Whisper.
+
     Usage:
-        python add_subtitles_and_extract_frames.py [video_name1] [video_name2] ...
-        
+        python add_subtitles_and_extract_frames.py [video_name1] [video_name2] ... [--model MODEL] [--use-srt]
+
+    Options:
+        --model MODEL: Whisper model to use (default: tiny.en)
+        --use-srt: Use SRT files instead of Whisper (requires matching .srt files)
+
     If video names are provided, processes only those videos.
-    If no video names are provided, processes all videos in data/videos that have
-    matching subtitle files in data/subtitles/robot.
-        
+    If no video names are provided, processes all videos in data/videos.
+
     Examples:
-        python add_subtitles_and_extract_frames.py bedroom_01  # Process single video
-        python add_subtitles_and_extract_frames.py bedroom_01 bedroom_02  # Process two videos
+        python add_subtitles_and_extract_frames.py bedroom_01  # Process single video with Whisper
+        python add_subtitles_and_extract_frames.py bedroom_01 --model small.en  # Use different model
+        python add_subtitles_and_extract_frames.py bedroom_01 --use-srt  # Use SRT file
         python add_subtitles_and_extract_frames.py              # Process all videos
     """
     import sys
-    
+
+    # Parse command line arguments
+    args = sys.argv[1:]
+    use_whisper = True
+    whisper_model = "small.en"
+
+    # Check for flags
+    if '--use-srt' in args:
+        use_whisper = False
+        args.remove('--use-srt')
+
+    if '--model' in args:
+        try:
+            model_idx = args.index('--model')
+            whisper_model = args[model_idx + 1]
+            args = args[:model_idx] + args[model_idx + 2:]
+        except (IndexError, ValueError):
+            print("Error: --model flag requires a model name")
+            return
+
     # Paths
     videos_dir = Path("data/videos")
-    subtitles_dir = Path("data/subtitles/robot")
+    subtitles_dir = Path("data/subtitles")
     frames_base_dir = Path("data/frames")
     
     # Get video names from command line arguments (if provided)
-    if len(sys.argv) > 1:
+    if args:
         # Process specified videos
-        video_names = [arg.replace('.mp4', '') for arg in sys.argv[1:]]
+        video_names = [arg.replace('.mp4', '') for arg in args]
         videos_to_process = []
-        
+
         for video_name in video_names:
             video_path = videos_dir / f"{video_name}.mp4"
-            srt_path = subtitles_dir / f"{video_name}.srt"
-            
+            srt_path = subtitles_dir / f"{video_name}.srt" if not use_whisper else None
+
             if not video_path.exists():
                 print(f"✗ Video file not found: {video_path}")
                 continue
-            
-            if not srt_path.exists():
+
+            if not use_whisper and not srt_path.exists():
                 print(f"✗ Subtitle file not found: {srt_path}")
                 continue
-                
+
             videos_to_process.append((video_name, video_path, srt_path))
-        
+
         if not videos_to_process:
             print("No valid videos to process.")
             return
-        
+
         # Process each video
         for video_name, video_path, srt_path in videos_to_process:
             print(f"\n{'='*60}")
             print(f"Processing: {video_name}")
             print(f"{'='*60}")
             print(f"Video: {video_path}")
-            print(f"Subtitles: {srt_path}")
+            if use_whisper:
+                print(f"Subtitles: Generated using Whisper ({whisper_model})")
+            else:
+                print(f"Subtitles: {srt_path}")
             print(f"Output: {frames_base_dir / video_name}")
             print(f"{'='*60}\n")
-            
+
             try:
                 frames_saved = process_video_with_subtitles(
                     video_path=video_path,
-                    srt_path=srt_path,
                     output_frames_dir=frames_base_dir / video_name,
-                    frames_per_second=1
+                    frames_per_second=1,
+                    whisper_model=whisper_model,
+                    use_whisper=use_whisper,
+                    srt_path=srt_path
                 )
                 print(f"\n✓ Successfully processed {video_name}: {frames_saved} frames saved")
             except Exception as e:
@@ -348,28 +483,40 @@ def main():
                 import traceback
                 traceback.print_exc()
     else:
-        # Process all videos with matching subtitle files
+        # Process all videos
         video_files = list(videos_dir.glob("*.mp4"))
         if not video_files:
             print("No video files found in data/videos/")
             return
-        
-        # Find videos with matching subtitle files
+
+        # Find videos to process based on mode
         videos_to_process = []
         for video_file in video_files:
             video_name = video_file.stem
-            srt_path = subtitles_dir / f"{video_name}.srt"
-            if srt_path.exists():
+            srt_path = subtitles_dir / f"{video_name}.srt" if not use_whisper else None
+
+            if use_whisper:
+                # Always include video for Whisper processing
                 videos_to_process.append((video_name, video_file, srt_path))
             else:
-                print(f"⚠ Skipping {video_name}: No matching subtitle file found")
-        
+                # Only include if SRT file exists
+                if srt_path.exists():
+                    videos_to_process.append((video_name, video_file, srt_path))
+                else:
+                    print(f"⚠ Skipping {video_name}: No matching subtitle file found")
+
         if not videos_to_process:
-            print("No videos with matching subtitle files found.")
+            if use_whisper:
+                print("No videos found in data/videos/")
+            else:
+                print("No videos with matching subtitle files found.")
             return
-        
+
         print(f"\n{'='*60}")
-        print(f"Found {len(videos_to_process)} video(s) with matching subtitles")
+        if use_whisper:
+            print(f"Found {len(videos_to_process)} video(s) for Whisper processing")
+        else:
+            print(f"Found {len(videos_to_process)} video(s) with matching subtitles")
         print(f"{'='*60}\n")
         
         # Process each video
@@ -378,21 +525,26 @@ def main():
         
         for i, (video_name, video_path, srt_path) in enumerate(videos_to_process, 1):
             output_frames_dir = frames_base_dir / video_name
-            
+
             print(f"\n{'='*60}")
             print(f"[{i}/{len(videos_to_process)}] Processing: {video_name}")
             print(f"{'='*60}")
             print(f"Video: {video_path}")
-            print(f"Subtitles: {srt_path}")
+            if use_whisper:
+                print(f"Subtitles: Generated using Whisper ({whisper_model})")
+            else:
+                print(f"Subtitles: {srt_path}")
             print(f"Output: {output_frames_dir}")
             print(f"{'='*60}\n")
-            
+
             try:
                 frames_saved = process_video_with_subtitles(
                     video_path=video_path,
-                    srt_path=srt_path,
                     output_frames_dir=output_frames_dir,
-                    frames_per_second=1
+                    frames_per_second=1,
+                    whisper_model=whisper_model,
+                    use_whisper=use_whisper,
+                    srt_path=srt_path
                 )
                 print(f"\n✓ Successfully processed {video_name}: {frames_saved} frames saved")
                 successful += 1
