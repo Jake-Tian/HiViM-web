@@ -1,6 +1,8 @@
+import json
 import pickle
+import time
 from pathlib import Path
-from utils.llm import generate_text_response
+from utils.llm import generate_text_response, get_token_counter
 from utils.prompts import prompt_semantic_video, prompt_parse_query
 from utils.search import search_with_parse
 from utils.reasoning import parse_semantic_response, extract_clip_ids, watch_video_clips
@@ -23,7 +25,7 @@ def evaluate_semantic_answer(question, graph_search_results):
     
     # Get semantic answer from LLM
     try:
-        semantic_response = generate_text_response(prompt)
+        semantic_response, _ = generate_text_response(prompt)
     except Exception as e:
         raise Exception(f"Error generating semantic answer: {e}")
     
@@ -56,6 +58,7 @@ def reason(question, graph, video_name):
             - 'video_answer_outputs': List of outputs from prompt_video_answer for each clip watched
             - 'final_answer': The final answer to the question
     """
+    start_time = time.time()
     result = {
         'question': question,
         'parse_query_output': None,
@@ -64,16 +67,15 @@ def reason(question, graph, video_name):
         'video_answer_outputs': None,
         'final_answer': None
     }
-    
     print("Question:", question)
-    
+
     #--------------------------------
     # Part 1: Search the graph
     #--------------------------------
     print("\n[Step 1] Searching the graph...")
     try:
         # Parse query using LLM
-        parse_query_response = generate_text_response(prompt_parse_query + "\n" + question)
+        parse_query_response, _ = generate_text_response(prompt_parse_query + "\n" + question)
         result['parse_query_output'] = parse_query_response
         print("Parse Query Output:")
         print(parse_query_response)
@@ -106,6 +108,21 @@ def reason(question, graph, video_name):
         result['video_answer_outputs'] = []
         print("FINAL ANSWER (from graph):")
         print(result['final_answer'])
+        usage_path = Path("data/results/token_usage.json")
+        data = {"memorization": {}, "reasoning": {}}
+        if usage_path.exists():
+            try:
+                with open(usage_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        data.setdefault("reasoning", {})
+        data["reasoning"][video_name] = get_token_counter()
+        usage_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(usage_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        elapsed = time.time() - start_time
+        print(f"Reasoning time: {elapsed:.2f}s")
         return result
     
     # If action is Search, watch the video clips
@@ -128,7 +145,9 @@ def reason(question, graph, video_name):
         )
         if not subdirs:
             raise ValueError(f"Could not extract clip IDs from content: {parsed['content']} and no clip folders in {frames_dir}")
-        first_clip = int(subdirs[0]) if str(subdirs[0]).isdigit() else subdirs[0]
+        # Prefer numeric folder names so clip_ids is consistently list of int
+        numeric_subdirs = sorted([d for d in subdirs if str(d).isdigit()], key=lambda x: int(x))
+        first_clip = int(numeric_subdirs[0]) if numeric_subdirs else subdirs[0]
         clip_ids = [first_clip]
         print(f"No clip IDs in content; using first clip from frames: {clip_ids} (will use final-answer prompt)")
 
@@ -158,7 +177,23 @@ def reason(question, graph, video_name):
     
     print("Final Answer:")
     print(result['final_answer'])
-    
+
+    usage_path = Path("data/results/token_usage.json")
+    data = {"memorization": {}, "reasoning": {}}
+    if usage_path.exists():
+        try:
+            with open(usage_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    data.setdefault("reasoning", {})
+    data["reasoning"][video_name] = get_token_counter()
+    usage_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(usage_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    elapsed = time.time() - start_time
+    print(f"Reasoning time: {elapsed:.2f}s")
+
     return result
 
 

@@ -48,12 +48,11 @@ Thumbs.db
 test.sh
 
 # Analysis documents (local only, not for GitHub)
-error_analysis.md
-location_improvement_suggestions.md
-REASONING_PROCESS.md
+docs/
 
 # Log files (local only, not for GitHub)
 test.log
+token_usage.json
 
 # Local scripts (local only, not for GitHub)
 process_graph.py

@@ -753,10 +753,10 @@ class HeteroGraph:
         # Create the full prompt with proper string formatting
         full_prompt = f"Character: {character_name}\n\nCharacter behaviors (from graph edges):\n{edges_text}\n{prompt_character_summary}"
         try:
-            attributes_response = generate_text_response(full_prompt)
+            attributes_response, _ = generate_text_response(full_prompt)
         except Exception as e:
             print(f"LLM call failed, retrying... Error: {e}")
-            attributes_response = generate_text_response(full_prompt)
+            attributes_response, _ = generate_text_response(full_prompt)
         
         # Parse the LLM response
         attributes_response = strip_code_fences(attributes_response)
@@ -841,10 +841,10 @@ class HeteroGraph:
         # Create the full prompt with proper string formatting
         full_prompt = f"Character 1: {character1}\nCharacter 2: {character2}\n\nCharacter interactions (from graph edges):\n{edges_text}\n{prompt_character_relationships}"
         try:
-            relationships_response = generate_text_response(full_prompt)
+            relationships_response, _ = generate_text_response(full_prompt)
         except Exception as e:
             print(f"LLM call failed, retrying... Error: {e}")
-            relationships_response = generate_text_response(full_prompt)
+            relationships_response, _ = generate_text_response(full_prompt)
         
         # Parse the LLM response
         relationships_response = strip_code_fences(relationships_response)
@@ -942,10 +942,10 @@ class HeteroGraph:
         
         # Call LLM
         try:
-            response = generate_text_response(full_prompt)
+            response, _ = generate_text_response(full_prompt)
         except Exception as e:
             print(f"LLM call failed, retrying... Error: {e}")
-            response = generate_text_response(full_prompt)
+            response, _ = generate_text_response(full_prompt)
         
         # Parse the LLM response
         response = strip_code_fences(response)

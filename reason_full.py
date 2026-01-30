@@ -26,7 +26,7 @@ def evaluate_answer(question, ground_truth_answer, predicted_answer):
     )
     
     try:
-        response = generate_text_response(prompt)
+        response, _ = generate_text_response(prompt)
         # Clean the response - extract Yes/No
         response = response.strip().upper()
         if response.startswith("YES"):

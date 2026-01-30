@@ -119,7 +119,7 @@ if __name__ == "__main__":
     query = "Which takeout should be taken to Anna?"
     
     try:
-        parse_query_response = generate_text_response(prompt_parse_query + "\n" + query)
+        parse_query_response, _ = generate_text_response(prompt_parse_query + "\n" + query)
         result = search_with_parse(query, graph, parse_query_response)
         print(result)
     except Exception as e:

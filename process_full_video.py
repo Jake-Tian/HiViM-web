@@ -6,7 +6,7 @@ import time
 import traceback
 from pathlib import Path
 from classes.hetero_graph import HeteroGraph
-from utils.llm import generate_text_response
+from utils.llm import generate_text_response, reset_token_counter, get_token_counter
 from utils.mllm_pictures import generate_messages, get_response
 from utils.prompts import prompt_generate_episodic_memory, prompt_extract_triples
 from utils.general import strip_code_fences, parse_json_with_repair, update_character_appearance_keys, Tee
@@ -24,9 +24,11 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
     Returns:
         tuple: (graph, episodic_memory) - The processed graph and episodic memory dictionary
     """
+    start_time = time.time()
     frames_dir = Path(frames_dir)
     video_name = frames_dir.name
-    
+    reset_token_counter()
+
     # Set default output paths if not provided
     if output_graph_path is None:
         output_graph_path = f"data/semantic_memory/{video_name}.pkl"
@@ -69,10 +71,10 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             response_dict = None
             for attempt in range(max_episodic_retries):
                 try:
-                    response = get_response(messages)
+                    response, _ = get_response(messages)
                 except Exception as e:
                     print(f"LLM call failed, retrying... Error: {e}")
-                    response = get_response(messages)
+                    response, _ = get_response(messages)
                 parsed, err = parse_json_with_repair(response, expect_dict=True)
                 if err is None:
                     response_dict = parsed
@@ -141,10 +143,10 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
             if behaviors:
                 behavior_prompt = prompt_extract_triples + "\n" + "\n".join(str(b) for b in behaviors)
                 try:
-                    triples_response = generate_text_response(behavior_prompt)
+                    triples_response, _ = generate_text_response(behavior_prompt)
                 except Exception as e:
                     print(f"LLM call failed, retrying... Error: {e}")
-                    triples_response = generate_text_response(behavior_prompt)
+                    triples_response, _ = generate_text_response(behavior_prompt)
                 triples, triples_err = parse_json_with_repair(triples_response, expect_dict=False)
                 if triples_err is not None:
                     print(f"Triples JSON parse failed: {triples_err}, using empty list")
@@ -252,7 +254,23 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
     with open(output_episodic_memory_path, "w") as f:
         json.dump(episodic_memory, f, indent=2)
     print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
-    
+
+    usage_path = Path("data/results/token_usage.json")
+    data = {"memorization": {}, "reasoning": {}}
+    if usage_path.exists():
+        try:
+            with open(usage_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    data.setdefault("memorization", {})
+    data["memorization"][video_name] = get_token_counter()
+    usage_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(usage_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    elapsed = time.time() - start_time
+    print(f"Memorization time: {elapsed:.2f}s")
+
     return graph, episodic_memory
 
 

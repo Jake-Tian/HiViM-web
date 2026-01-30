@@ -68,10 +68,10 @@ def summarize_clips(episodic_memory, start_clip_id, end_clip_id):
     
     # Generate summary using LLM
     try:
-        response = generate_text_response(full_prompt)
+        response, _ = generate_text_response(full_prompt)
     except Exception as e:
         print(f"LLM call failed, retrying... Error: {e}")
-        response = generate_text_response(full_prompt)
+        response, _ = generate_text_response(full_prompt)
     
     # Clean the response (remove code fences if present)
     summary = strip_code_fences(response)

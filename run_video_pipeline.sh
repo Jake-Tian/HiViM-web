@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ./run_video_pipeline.sh --start 1 --end 20 2>&1 | tee log.txt
-# Run full pipeline sequentially per video to conserve storage:
+# Run full pipeline with download/extract overlap:
 # 1) Read web.json to get video list
 # 2) Download MP4
 # 3) Add subtitles + extract frames (using Whisper)
@@ -17,6 +17,48 @@ cleanup_video() {
   local video_name="$1"
   rm -f "data/videos/${video_name}.mp4"
   rm -rf "data/frames/${video_name}"
+}
+
+download_and_extract() {
+  local video_name="$1"
+  # Step 1: Download video
+  echo ""
+  if [[ -f "data/videos/${video_name}.mp4" && -s "data/videos/${video_name}.mp4" ]]; then
+    echo "Step 1: Video already exists, skipping download: data/videos/${video_name}.mp4"
+  else
+    echo "Step 1: Downloading video ${video_name}..."
+    if ! python3 preprocessing/download_web_videos.py "$video_name"; then
+      echo "✗ Download failed for ${video_name}"
+      cleanup_video "$video_name"
+      return 1
+    fi
+    
+    if [[ ! -f "data/videos/${video_name}.mp4" || ! -s "data/videos/${video_name}.mp4" ]]; then
+      echo "✗ Video file not found (or empty) after download: data/videos/${video_name}.mp4"
+      cleanup_video "$video_name"
+      return 1
+    fi
+  fi
+
+  # Step 2: Add subtitles + extract frames (using Whisper)
+  echo ""
+  if [[ -d "data/frames/${video_name}" ]] && compgen -G "data/frames/${video_name}/*/*.jpg" > /dev/null; then
+    echo "Step 2: Frames already extracted, skipping: data/frames/${video_name}"
+  else
+    echo "Step 2: Extracting subtitles and frames for ${video_name}..."
+    if ! python3 preprocessing/add_subtitles_and_extract_frames.py "$video_name"; then
+      echo "✗ Frame extraction failed for ${video_name}"
+      cleanup_video "$video_name"
+      return 1
+    fi
+    
+    if [[ ! -d "data/frames/${video_name}" ]]; then
+      echo "✗ Frames directory not found after extraction: data/frames/${video_name}"
+      cleanup_video "$video_name"
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # Parse command-line arguments
@@ -121,56 +163,39 @@ with open('data/web.json', 'r', encoding='utf-8') as f:
   fi
 fi
 
-for video in "${VIDEOS[@]}"; do
-  if [[ -z "$video" ]]; then
-    continue
-  fi
+worker() {
+  local start_idx="$1"
+  local next_pid=""
 
-  echo ""
-  echo "============================================================"
-  echo "Processing video: ${video}"
-  echo "============================================================"
-
-  # Step 1: Download video
-  echo ""
-  if [[ -f "data/videos/${video}.mp4" && -s "data/videos/${video}.mp4" ]]; then
-    echo "Step 1: Video already exists, skipping download: data/videos/${video}.mp4"
-  else
-    echo "Step 1: Downloading video ${video}..."
-    if ! python3 preprocessing/download_web_videos.py "$video"; then
-      echo "✗ Download failed for ${video}"
-      cleanup_video "$video"
+  for ((i=start_idx; i<${#VIDEOS[@]}; i+=2)); do
+    video="${VIDEOS[$i]}"
+    if [[ -z "$video" ]]; then
       continue
     fi
-    
-    if [[ ! -f "data/videos/${video}.mp4" || ! -s "data/videos/${video}.mp4" ]]; then
-      echo "✗ Video file not found (or empty) after download: data/videos/${video}.mp4"
-      cleanup_video "$video"
-      continue
-    fi
-  fi
 
-  # Step 2: Add subtitles + extract frames (using Whisper)
-  echo ""
-  if [[ -d "data/frames/${video}" ]] && compgen -G "data/frames/${video}/*/*.jpg" > /dev/null; then
-    echo "Step 2: Frames already extracted, skipping: data/frames/${video}"
-  else
-    echo "Step 2: Extracting subtitles and frames for ${video}..."
-    if ! python3 preprocessing/add_subtitles_and_extract_frames.py "$video"; then
-      echo "✗ Frame extraction failed for ${video}"
-      cleanup_video "$video"
-      continue
+    # Wait for the background download/extract (if any) to finish
+    if [[ -n "$next_pid" ]]; then
+      if ! wait "$next_pid"; then
+        echo "✗ Download/extract failed for ${video}"
+        cleanup_video "$video"
+        next_pid=""
+        continue
+      fi
+      next_pid=""
+    else
+      # First video: run download/extract in foreground
+      if ! download_and_extract "$video"; then
+        continue
+      fi
     fi
-    
-    if [[ ! -d "data/frames/${video}" ]]; then
-      echo "✗ Frames directory not found after extraction: data/frames/${video}"
-      cleanup_video "$video"
-      continue
-    fi
-  fi
 
-  # Step 3: Build graph memory
-  if python3 - <<PY
+    echo ""
+    echo "============================================================"
+    echo "Processing video: ${video}"
+    echo "============================================================"
+
+    # Step 3: Build graph memory
+    if python3 - <<PY
 from pathlib import Path
 from process_full_video import process_full_video
 
@@ -182,20 +207,28 @@ if not frames_dir.exists():
 process_full_video(frames_dir)
 print(f"✓ Graph memory built for {video_name}")
 PY
-  then
-    : # success
-  else
-    echo "✗ Graph processing failed for ${video}"
-    cleanup_video "$video"
-    continue
-  fi
+    then
+      : # success
+    else
+      echo "✗ Graph processing failed for ${video}"
+      cleanup_video "$video"
+      continue
+    fi
 
-  # Step 4: Answer questions and update results.json (process 2 questions in parallel)
-  if python3 - <<PY
+    # Prefetch next video's download/extract (for this worker) while reasoning
+    next_idx=$((i + 2))
+    if [[ $next_idx -lt ${#VIDEOS[@]} ]]; then
+      next_video="${VIDEOS[$next_idx]}"
+      download_and_extract "$next_video" &
+      next_pid=$!
+    fi
+
+    # Step 4: Answer questions and update results.json (sequential per video)
+    if python3 - <<PY
 import json
 import pickle
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import fcntl
 
 from reason import reason
 from reason_full import evaluate_answer
@@ -222,12 +255,6 @@ else:
     video_questions = questions_data.get(video_name, {}).get("qa_list", [])
 
 existing_results = {}
-if results_path.exists():
-    try:
-        with open(results_path, "r", encoding="utf-8") as f:
-            existing_results = json.load(f)
-    except json.JSONDecodeError:
-        existing_results = {}
 
 def process_question(qa):
     """Process a single question and return (question_id, result_dict)"""
@@ -265,40 +292,61 @@ def process_question(qa):
             "evaluator_correct": False,
         })
 
-# Process questions in parallel (2 at a time)
+# Process questions sequentially
 new_results = {}
-with ThreadPoolExecutor(max_workers=2) as executor:
-    futures = {executor.submit(process_question, qa): qa for qa in video_questions}
-    
-    completed = 0
-    for future in as_completed(futures):
-        question_id, result = future.result()
-        new_results[question_id] = result
-        completed += 1
-        if completed % 5 == 0:
-            print(f"  Processed {completed}/{len(video_questions)} questions...")
+completed = 0
+for qa in video_questions:
+    question_id, result = process_question(qa)
+    new_results[question_id] = result
+    completed += 1
+    if completed % 5 == 0:
+        print(f"  Processed {completed}/{len(video_questions)} questions...")
 
-# Update existing_results with new results (preserving results from other videos)
-existing_results.update(new_results)
+# Update existing_results with new results (preserving results from other videos) under a file lock
+lock_path = results_path.with_suffix(results_path.suffix + ".lock")
+lock_path.parent.mkdir(parents=True, exist_ok=True)
+with open(lock_path, "w") as lock_file:
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                existing_results = json.load(f)
+        except json.JSONDecodeError:
+            existing_results = {}
+    existing_results.update(new_results)
 
-results_path.parent.mkdir(parents=True, exist_ok=True)
-with open(results_path, "w", encoding="utf-8") as f:
-    json.dump(existing_results, f, indent=2, ensure_ascii=False)
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(results_path, "w", encoding="utf-8") as f:
+        json.dump(existing_results, f, indent=2, ensure_ascii=False)
+    fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 print(f"✓ Updated results.json for {video_name} ({len(video_questions)} questions)")
 PY
-  then
-    : # success
-  else
-    echo "✗ Reasoning failed for ${video}"
-    cleanup_video "$video"
-    continue
-  fi
+    then
+      : # success
+    else
+      echo "✗ Reasoning failed for ${video}"
+      cleanup_video "$video"
+      continue
+    fi
 
-  # Step 5: Cleanup to free storage
-  # cleanup_video "$video"
-  # echo "✓ Cleaned up video and frames for ${video}"
-done
+    # Step 5: Cleanup to free storage (after reasoning complete)
+    cleanup_video "$video"
+    echo "✓ Cleaned up video and frames for ${video}"
+  done
+
+  if [[ -n "$next_pid" ]]; then
+    wait "$next_pid" || true
+  fi
+}
+
+# Run two workers in parallel
+worker 0 &
+PID1=$!
+worker 1 &
+PID2=$!
+wait "$PID1" || true
+wait "$PID2" || true
 
 echo ""
 echo "All videos processed."

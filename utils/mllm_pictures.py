@@ -4,7 +4,7 @@ import cv2
 import time
 import numpy as np
 from openai import OpenAI
-
+from utils.llm import add_tokens
 
 def get_response(messages):
     client = OpenAI()
@@ -12,7 +12,9 @@ def get_response(messages):
         model="gemini-2.5-flash",
         messages=messages,
     )
-    return response.choices[0].message.content
+    total_tokens = getattr(response.usage, "total_tokens", 0) if response.usage else 0
+    add_tokens(total_tokens)
+    return response.choices[0].message.content, total_tokens
 
 
 def generate_messages(images, prompt):

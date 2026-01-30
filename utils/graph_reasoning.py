@@ -43,7 +43,7 @@ def reason_from_graph(question, graph):
     print("\n[Step 1] Searching the graph...")
     try:
         # Parse query using LLM
-        parse_query_response = generate_text_response(prompt_parse_query + "\n" + question)
+        parse_query_response, _ = generate_text_response(prompt_parse_query + "\n" + question)
         result['parse_query_output'] = parse_query_response
         print("Parse Query Output:")
         print(parse_query_response)
@@ -66,7 +66,7 @@ def reason_from_graph(question, graph):
         prompt = prompt_semantic_answer_only + "\n\nExtracted knowledge:\n" + graph_search_results + "\n\nQuestion: " + question
         
         # Get answer from LLM
-        answer = generate_text_response(prompt)
+        answer, _ = generate_text_response(prompt)
         result['answer'] = answer.strip()
         
         print("Answer:")

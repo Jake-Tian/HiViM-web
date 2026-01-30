@@ -7,6 +7,7 @@ watching multiple clips in sequence.
 
 from pathlib import Path
 import glob
+import time
 from utils.mllm_pictures import generate_messages, get_response
 from utils.prompts import prompt_video_answer, prompt_video_answer_final
 from .response_parser import parse_video_response
@@ -27,6 +28,7 @@ def process_video_clip(clip_id, question, previous_summaries, frames_dir, is_las
         dict with keys: 'clip_id', 'video_answer_output', 'parsed_response' (if not last), 
                        'answer' (if found), 'is_last_clip' (if last)
     """
+    start_time = time.time()
     # Get the folder for this clip
     clip_folder = frames_dir / str(clip_id)
     if not clip_folder.exists():
@@ -79,7 +81,7 @@ def process_video_clip(clip_id, question, previous_summaries, frames_dir, is_las
     
     # Get response from MLLM
     try:
-        video_response = get_response(messages)
+        video_response, _ = get_response(messages)
     except Exception as e:
         raise Exception(f"Error getting response for clip {clip_id}: {e}")
     
@@ -104,6 +106,9 @@ def process_video_clip(clip_id, question, previous_summaries, frames_dir, is_las
         except Exception as e:
             raise Exception(f"Error parsing video response for clip {clip_id}: {e}\nResponse: {video_response}")
     
+    elapsed = time.time() - start_time
+    result['clip_time_seconds'] = elapsed
+    print(f"   Clip {clip_id} processing time: {elapsed:.2f}s")
     return result
 
 
