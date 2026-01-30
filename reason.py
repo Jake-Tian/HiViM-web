@@ -1,6 +1,7 @@
 import json
 import pickle
 import time
+import fcntl
 from pathlib import Path
 from utils.llm import generate_text_response, get_token_counter
 from utils.prompts import prompt_semantic_video, prompt_parse_query
@@ -39,6 +40,27 @@ def evaluate_semantic_answer(question, graph_search_results):
         'semantic_video_output': semantic_response,
         'parsed_response': parsed
     }
+
+
+def _update_token_usage(video_name, total_tokens):
+    usage_path = Path("data/results/token_usage.json")
+    lock_path = usage_path.with_suffix(usage_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        data = {"memorization": {}, "reasoning": {}}
+        if usage_path.exists():
+            try:
+                with open(usage_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        data.setdefault("reasoning", {})
+        data["reasoning"][video_name] = total_tokens
+        usage_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(usage_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def reason(question, graph, video_name):
@@ -108,19 +130,7 @@ def reason(question, graph, video_name):
         result['video_answer_outputs'] = []
         print("FINAL ANSWER (from graph):")
         print(result['final_answer'])
-        usage_path = Path("data/results/token_usage.json")
-        data = {"memorization": {}, "reasoning": {}}
-        if usage_path.exists():
-            try:
-                with open(usage_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                pass
-        data.setdefault("reasoning", {})
-        data["reasoning"][video_name] = get_token_counter()
-        usage_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(usage_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        _update_token_usage(video_name, get_token_counter())
         elapsed = time.time() - start_time
         print(f"Reasoning time: {elapsed:.2f}s")
         return result
@@ -178,19 +188,7 @@ def reason(question, graph, video_name):
     print("Final Answer:")
     print(result['final_answer'])
 
-    usage_path = Path("data/results/token_usage.json")
-    data = {"memorization": {}, "reasoning": {}}
-    if usage_path.exists():
-        try:
-            with open(usage_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    data.setdefault("reasoning", {})
-    data["reasoning"][video_name] = get_token_counter()
-    usage_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(usage_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _update_token_usage(video_name, get_token_counter())
     elapsed = time.time() - start_time
     print(f"Reasoning time: {elapsed:.2f}s")
 

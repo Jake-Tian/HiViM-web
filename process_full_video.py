@@ -4,6 +4,7 @@ import pickle
 import sys
 import time
 import traceback
+import fcntl
 from pathlib import Path
 from classes.hetero_graph import HeteroGraph
 from utils.llm import generate_text_response, reset_token_counter, get_token_counter
@@ -256,18 +257,23 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
     print(f"\n✓ Saved episodic memory for {len(episodic_memory)} clips to {output_episodic_memory_path}")
 
     usage_path = Path("data/results/token_usage.json")
-    data = {"memorization": {}, "reasoning": {}}
-    if usage_path.exists():
-        try:
-            with open(usage_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    data.setdefault("memorization", {})
-    data["memorization"][video_name] = get_token_counter()
-    usage_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(usage_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    lock_path = usage_path.with_suffix(usage_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        data = {"memorization": {}, "reasoning": {}}
+        if usage_path.exists():
+            try:
+                with open(usage_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        data.setdefault("memorization", {})
+        data["memorization"][video_name] = get_token_counter()
+        usage_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(usage_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
     elapsed = time.time() - start_time
     print(f"Memorization time: {elapsed:.2f}s")
 
