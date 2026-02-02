@@ -3,8 +3,6 @@ import pickle
 from pathlib import Path
 from reason import reason
 from utils.graph_reasoning import reason_from_graph
-from utils.llm import generate_text_response
-from utils.prompts import prompt_agent_verify_answer_referencing
 
 
 def evaluate_answer(question, ground_truth_answer, predicted_answer):
@@ -19,27 +17,14 @@ def evaluate_answer(question, ground_truth_answer, predicted_answer):
     Returns:
         bool: True if the answer is correct, False otherwise
     """
-    prompt = prompt_agent_verify_answer_referencing.format(
-        question=question,
-        ground_truth_answer=ground_truth_answer,
-        agent_answer=predicted_answer
-    )
-    
-    try:
-        response, _ = generate_text_response(prompt)
-        # Clean the response - extract Yes/No
-        response = response.strip().upper()
-        if response.startswith("YES"):
-            return True
-        elif response.startswith("NO"):
-            return False
-        else:
-            # If response is ambiguous, default to False
-            print(f"Warning: Unexpected evaluator response: {response}. Defaulting to False.")
-            return False
-    except Exception as e:
-        print(f"Error evaluating answer: {e}. Defaulting to False.")
+    # Compare first capital letter (A-D) only
+    if ground_truth_answer is None or predicted_answer is None:
         return False
+    gt = str(ground_truth_answer).strip().upper()
+    pred = str(predicted_answer).strip().upper()
+    if not gt or not pred:
+        return False
+    return gt[0] == pred[0]
 
 
 def find_pkl_files(semantic_memory_dir="data/semantic_memory"):
@@ -62,24 +47,46 @@ def find_pkl_files(semantic_memory_dir="data/semantic_memory"):
     return video_names
 
 
-def load_questions(json_path="data/web.json"):
+def load_questions(json_path="data/questions.jsonl"):
     """
-    Load questions from web.json file.
+    Load questions from questions.jsonl file.
 
     Args:
-        json_path: Path to the web.json file
+        json_path: Path to the questions.jsonl file
     
     Returns:
-        dict: Dictionary with video names as keys and question lists as values
+        list: List of question dicts
     """
     json_file = Path(json_path)
     if not json_file.exists():
         raise FileNotFoundError(f"Questions file not found: {json_path}")
-    
-    with open(json_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    
-    return data
+
+    questions = []
+    if json_file.suffix == ".jsonl":
+        with open(json_file, 'r', encoding='utf-8') as f:
+            for idx, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                item["_line_number"] = idx
+                questions.append(item)
+    else:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # If it's a list of questions, use it directly
+        if isinstance(data, list):
+            questions = data
+        else:
+            # Fallback: attempt to flatten dict format
+            for _, qa_list in data.items():
+                if isinstance(qa_list, list):
+                    questions.extend(qa_list)
+
+    return questions
 
 
 def process_all_videos(output_dir="data/results", output_filename="results.json"):
@@ -104,27 +111,36 @@ def process_all_videos(output_dir="data/results", output_filename="results.json"
     
     # Filter questions for available videos
     all_questions = []
-    for video_name, video_data in questions_data.items():
-        if video_name in available_videos:
-            qa_list = video_data.get("qa_list", [])
-            for qa in qa_list:
-                qa["video_name"] = video_name
-                all_questions.append(qa)
-    
-    print(f"Found {len(all_questions)} questions across {len([v for v in questions_data.keys() if v in available_videos])} videos")
+    for qa in questions_data:
+        video_name = qa.get("video_id") or qa.get("video_name")
+        if not video_name or video_name not in available_videos:
+            continue
+        qa["video_name"] = video_name
+        all_questions.append(qa)
+
+    print(f"Found {len(all_questions)} questions across {len({q['video_name'] for q in all_questions})} videos")
     
     # Process each question
     results = {}
     semantic_memory_dir = Path("data/semantic_memory")
     
     for i, qa in enumerate(all_questions, 1):
-        question_id = qa["question_id"]
-        question = qa["question"]
+        question_id = qa.get("question_id")
+        if not question_id:
+            line_no = qa.get("_line_number", i)
+            question_id = f"{qa.get('video_name', 'video')}_{line_no}"
+        question_text = qa.get("question_text") or qa.get("question") or ""
+        options = qa.get("options") or {}
+        if isinstance(options, dict) and options:
+            options_text = "\n".join([f"{k}: {v}" for k, v in options.items()])
+            question = f"{question_text}\nOptions:\n{options_text}"
+        else:
+            question = question_text
         video_name = qa["video_name"]
-        ground_truth = qa["answer"]
-        reasoning = qa.get("reasoning", "")
-        timestamp = qa.get("timestamp", "")
-        qa_type = qa.get("type", [])
+        ground_truth = qa.get("correct_answer") or qa.get("answer")
+        reasoning = qa.get("explanation", "") or qa.get("reasoning", "")
+        timestamp = qa.get("segment_info", {}).get("timestamp", "") or qa.get("timestamp", "")
+        qa_type = qa.get("category", "") or qa.get("type", [])
         before_clip = qa.get("before_clip", None)
         
         print(f"\nProcessing question {i}/{len(all_questions)}: {question_id}")

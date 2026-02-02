@@ -1234,12 +1234,8 @@ class HeteroGraph:
         if not node1_str or not node2_str:
             return 0.0
         
-        # Character-Character matching: exact name match
-        if node1_str.startswith("<") and node1_str.endswith(">") and node2_str.startswith("<") and node2_str.endswith(">"):
-            return 1.0 if node1_str == node2_str else 0.0
-        
-        # For Object-Object and Object-Character: use cosine similarity
-        # Need both embeddings to be available
+        # Use cosine similarity for all node types (character/object).
+        # Need both embeddings to be available.
         if node1_embedding is None or node2_embedding is None:
             return 0.0
         

@@ -409,11 +409,11 @@ You are a query parser for a knowledge graph system that stores video informatio
 
 **LOW-LEVEL EDGES**: Specific actions/states with scene info
 - Format: `["<Alice>", "picks up", "coffee"]` or `["coffee", "is on", "table"]`
-- Most abundant source - allocate 30-45 for action-focused queries
-- Use for: specific actions, temporal/spatial queries ("what did X do", "where is X")
+- Most abundant source - allocate 20-35 for action-focused queries
+- Use for: specific actions and locations ("what did X do", "where is X")
 
 **CONVERSATIONS**: Dialogue transcripts `[speaker, text]` pairs
-- Allocate 10-45 based on query needs
+- Allocate 10-35 based on query needs
 - Use for: "why" questions, dialogue content, causal reasoning
 
 ## YOUR TASK
@@ -435,19 +435,21 @@ Given a query and budget `k=50`, output:
 - **Low (0.1-0.4)**: What we're searching for - question marks ("?"), relationship terms ("relationship", "friendship"), unknown actions - use 0.2-0.4 for search targets, 0.1-0.2 for vague terms
 
 **Special Rules for Location Queries**:
-- **Preserve hierarchical locations**: When parsing location queries, keep complete hierarchical location phrases as single entities in target fields (e.g., "cabinet on the left side of the wardrobe", "cabinet below the dressing table", "table on the right of the water dispenser"). Do NOT split them into separate components.
-- **Temporal-spatial queries**: 
-  - "where is X now?" → Use triple `[X, "is at", "?", ...]` with high weight on X. The search should prioritize the most recent state edges (highest clip_id).
-  - "last time" / "last place" → Use triple `[X, "is at", "?", ...]` and prioritize edges with highest clip_id values.
-  - "where should X be placed?" → Use triple `[X, "should be placed at", "?", ...]` or `[X, "is placed at", "?", ...]` to find placement instructions.
-- **Source location queries**: "where can character get X?" / "where did X get Y from?" → Use triple `[X, "gets", "Y", ...]` or `[Y, "is in", "?", ...]` to find source locations. Include a helper triple if needed: `[Y, "is from", "?", ...]`.
-- **Allocation for location queries**: Prioritize low-level edges (35-45) since they contain spatial information. Use conversations (5-10) only if placement instructions might be mentioned in dialogue.
+- **Allow place names**: Treat place names (restaurants, cities, airports, neighborhoods, landmarks) as valid locations. Do NOT require furniture-level specificity.
+- **Preserve hierarchical locations**: If a precise hierarchical location is given, keep the full phrase as a single entity (e.g., "cabinet on the left side of the wardrobe").
+- **Basic location patterns**:
+  - "where is/was X?" → Use `[X, "is at", "?", ...]` (high weight on X).
+  - "where should X be placed?" → Use `[X, "should be placed at", "?", ...]` or `[X, "is placed at", "?", ...]`.
+- **Source location queries**: "where can character get X?" / "where did X get Y from?" → Use `[Y, "is in", "?", ...]` and optionally a helper triple like `[X, "gets", "Y", ...]`.
+- **Recency hint**: If the query mentions "now" or "last", prefer more recent clips, but do not over-allocate to temporal logic.
+- **Allocation for location queries**: Prioritize low-level edges (25-35). Use conversations (5-10) only if location is mentioned in dialogue.
 
 2. **Allocation** `{k_high_level, k_low_level, k_conversations}`:
    - Total must be ≤ 50
-   - High-level: 5-10 max (limited availability)
-   - Low-level: 30-45 for action queries
-   - Conversations: 10-45 based on needs
+   - High-level: 3-8 max (limited availability)
+   - Low-level: 20-35 for action queries
+   - Conversations: 10-35 based on needs
+   - Temporal/counting are rare: keep them modest unless explicitly required
 
 3. **speaker_strict**: 
    - Set to `["<Anna>", "<Susan>"]` when query asks about dialogue between specific speakers
@@ -487,16 +489,13 @@ Given a query and budget `k=50`, output:
 }
 ```
 
-**Example 4**: "How many things on the dressing table are not often used by Lily?"
+**Example 4**: "Where did Emma have lunch in Chattanooga?"
 ```json
 {
-  "query_triples": [
-    ["<Lily>", "use", "things", 0.9, 0.7, 0.4],
-    ["things", "is on", "dressing table", 0.2, 0.4, 0.4]
-  ],
-  "spatial_constraint": null,
+  "query_triples": [["<Emma>", "has lunch at", "?", 0.9, 0.4, 0.2]],
+  "spatial_constraint": "Chattanooga",
   "speaker_strict": null,
-  "allocation": {"k_high_level": 2, "k_low_level": 40, "k_conversations": 8, "total_k": 50, "reasoning": "Main triple targets usage by Lily; helper triple constrains items to dressing table"}
+  "allocation": {"k_high_level": 2, "k_low_level": 30, "k_conversations": 18, "total_k": 50, "reasoning": "Place-name location query; use low-level edges for actions, conversations for stated locations"}
 }
 ```
 
@@ -506,7 +505,7 @@ Given a query and budget `k=50`, output:
   "query_triples": [["tape", "is at", "?", 0.8, 0.5, 0.15]],
   "spatial_constraint": null, 
   "speaker_strict": null, 
-  "allocation": {"k_high_level": 2, "k_low_level": 42, "k_conversations": 6, "total_k": 50, "reasoning": "Temporal-spatial query - 'now' means most recent location. Prioritize low-level edges with highest clip_id to find current state"}
+  "allocation": {"k_high_level": 2, "k_low_level": 30, "k_conversations": 18, "total_k": 50, "reasoning": "Location query - 'now' means most recent state; use low-level edges and some conversations for mentions"}
 }
 ```
 
@@ -581,7 +580,7 @@ Input format:
 
 Output format: 
 Action: [Answer] or [Search]
-Content: <your answer here> or [clip_id1, clip_id2, ...]
+Content: <option letter> or [clip_id1, clip_id2, ...]
 Summary: <only present when Action is [Search] - summary of extracted information from the graph>
 
 If the action is [Search]:
@@ -589,75 +588,8 @@ If the action is [Search]:
 - **Summary**: Provide a concise summary of extracted graph information relevant to the question, including key events, character information, conversations, and temporal/spatial context.
 
 If the action is [Answer]:
-- **Content**: Provide a concise, direct answer in ONE SENTENCE. Be brief and to the point. Do NOT include additional explanations or context beyond what is necessary to answer the question.
+- **Content**: Output ONLY the option letter (e.g., A, B, C, or D). Do NOT include the option text or any extra words.
 - Do not include a Summary field.
-
-Special types of questions:
-1. Spatial/Location questions (questions asking "where" or "which place"): 
-  - Only choose [Answer] if the location information includes specific furniture, containers, or precise spatial relationships. Generic room names alone are INSUFFICIENT.
-  - If the location information is generic (e.g., "kitchen", "office", "living room"), choose [Search].
-  - If the action is [Search]:
-    - Provide a list of video clip IDs (as integers) ranked by relevance: [clip_id1, clip_id2, ...]. 
-    - Include the clips where the actions occured, and the clips before and after the actions if neccessary. 
-    - Focus the summary on object locations, character actions involving the object, spatial relationships and temporal sequences. Exclude irrelevant information such as character attributes, relationships, and conversations.
-
-2. Temporal Sequence questions (questions asking about event order, sequence, "first", "before", "after", "should X be done first", "what happened before/after X", etc.):
-  - Only choose [Answer] if the graph clearly shows the temporal sequence with sufficient detail (e.g., clip IDs show clear sequence).
-  - If the temporal sequence is unclear, ambiguous, or missing key events, choose [Search].
-  - **Distinguish**: "Should X be done first?" asks about INSTRUCTIONS/intended order, while "What happened before/after X?" asks about ACTUAL sequence.
-  - If the action is [Search]:
-    - **Clip selection priority**: Focus on clips BEFORE or AFTER the key action/event based on the temporal context of the question. If information is insufficient, prioritize clips that occur BEFORE the key action.
-    - **Summary format**: MUST clearly indicate temporal information with explicit clip IDs. Format: "In clip [X], [character/event] [action]." Use this format for each relevant event in chronological order.
-    - Focus the summary on events in chronological order with explicit clip IDs, character actions and their sequence, and what happened before/after the key action. Exclude irrelevant information.
-
-3. Counting questions (questions asking "how many", "how many times", "how many pieces", "how many kinds", etc.):
-  - Only choose [Answer] if the graph provides explicit counts or if all occurrences can be clearly enumerated from the graph information.
-  - If counts are vague, incomplete, or if multiple occurrences might be missed, choose [Search].
-  - If the action is [Search]:
-    - **Clip selection**: Include ALL clips where the mentioned event takes place. Also include clip IDs between two mentioned events if necessary to ensure no counting is missed during the information storage step.
-    - **Summary format**: MUST clearly indicate counts per clip with explicit clip IDs. Format: "In clip [X], [character/event] [action] [count]." Example: "In clip 18, A did something once; in clip 20, A did something twice."
-    - Focus the summary on enumerating each occurrence with its clip ID and count, ensuring all events are accounted for. Exclude irrelevant information.
-
-Examples:
-
-Question: What is the relationship between Anna and Susan?
-Extracted information: High-level: Anna competes with Susan (85). Anna is competitive (90). Susan is competitive (88). Low-level: [12] Anna challenges Susan to a game. [15] Anna and Susan prepare for competition. Conversations: Conversation 1: Anna and Susan discuss their upcoming game, with Anna expressing confidence in winning.
-Output:
-Action: [Answer]
-Content: Anna and Susan are competitors.
-
-Question: What did Anna decide to drink before the game?
-Extracted information: High-level: Anna is health-conscious (80). Anna prefers water (85). Low-level: [15] Anna picks up Anna's water bottle. [16] Susan picks up Susan's sports drink. Conversations: Conversation 2: Anna says "I just want a bottle of water. That's fine. No sports soda for me." Susan responds "you never drink sports soda, and just mineral water."
-Output:
-Action: [Answer]
-Content: Anna decided to drink water before the game.
-
-Question: What happened after Alice received the gift?
-Extracted information: High-level: (no sequence information) Low-level: [15] Bob gives Alice wrapped gift box. [16] Alice unwraps gift box. [17] Alice reads book. Conversations: (no relevant conversations)
-Output:
-Action: [Answer]
-Content: After receiving the gift, Alice unwrapped it and then read the book.
-
-Question: Where is the book Lucky read just now?
-Extracted information: High-level: (no location information) Low-level: [8] Lucky reads book. (bedroom) [9] Lucky places book. (bedroom) Conversations: (no relevant conversations)
-Output:
-Action: [Search]
-Content: [8, 9, 7]
-Summary: The graph shows Lucky reading a book at clip 8 and placing it at clip 9, both in the bedroom. However, the specific location within the bedroom (e.g., which furniture or surface) is not captured in the graph. In clip 8, Lucky reads the book. In clip 9, Lucky places the book. The exact placement location (e.g., bedside table, desk, shelf) requires visual inspection of the video frames.
-
-Question: Should the balloons be put up first?
-Extracted information: High-level: (no sequence instructions) Low-level: [10] Betty instructs to put up balloons. (living room) [12] Betty and Linda write message on balloons. (living room) [14] Betty and Linda put up balloons. (living room) Conversations: (no relevant conversations)
-Output:
-Action: [Search]
-Content: [10, 12, 14, 11, 13]
-Summary: The graph shows multiple events but the temporal sequence is unclear. In clip 10, Betty instructs to put up balloons. In clip 12, Betty and Linda write message on balloons. In clip 14, Betty and Linda put up balloons. However, the graph does not clearly indicate whether the instruction in clip 10 specifies the order, or what happens before putting up the balloons. The sequence requires visual verification to determine the intended order.
-
-Question: How many times was the air-conditioning remote used?
-Extracted information: High-level: (no count information) Low-level: [8] Robot uses air-conditioning remote. (meeting room) [11] Robot uses air-conditioning remote. (meeting room) Conversations: (no relevant conversations)
-Output:
-Action: [Search]
-Content: [8, 11, 9, 10]
-Summary: The graph shows the air-conditioning remote being used at clip 8 and clip 11. However, to ensure accurate counting and verify no uses were missed between these clips, all clips from 8 to 11 should be checked. In clip 8, the remote was used once; in clip 11, the remote was used once. Clips 9-10 are included to ensure no counting is missed during the information storage step.
 """
 
 
@@ -694,78 +626,15 @@ Your task is to evaluate whether the current video clip (combined with any previ
 
 **OUTPUT FORMAT**:
 Action: [Answer] or [Search]
-Content: <your answer here> or <summary of what the video shows>
+Content: <option letter> or <summary of what the video shows>
 
 If Action is [Answer]:
-- Provide a concise, direct answer in ONE SENTENCE based on the current video and/or previous summaries.
-- Be brief and to the point. Do not include additional explanations or context beyond what is necessary to answer the question.
+- Output ONLY the option letter (e.g., A, B, C, or D). Do NOT include the option text or any extra words.
 
 If Action is [Search]:
 - Provide a summary describing what the current video shows. This summary will be passed to the next video clip.
 - MUST include the current clip ID in your summary.
 - Focus on key events, characters, objects, or actions that might be relevant for answering the question.
-
-**SPECIAL QUESTION TYPES**:
-1. **Spatial/Location Questions** (questions asking "where", "which place", or about object placement):
-- When to [Answer]: Only if you can see the SPECIFIC location (e.g., "on the coffee table", "in the left cabinet", "below the dressing table"). Generic room names alone are INSUFFICIENT unless the question specifically asks "which room".
-- When to [Search]: If you only see generic locations (e.g., "bedroom", "kitchen") or if the specific placement is unclear.
-- Summary format: Focus on object locations, character actions involving the object, and spatial relationships. Include clip ID: "In clip [X], [object] is [location/action]."
-
-2. **Temporal Sequence Questions** (questions asking "first", "before", "after", "should X be done first", "what happened before/after X"):
-- When to [Answer]: Only if you have seen the complete sequence with clear chronological order from previous summaries and current clip.
-- When to [Search]: If the sequence is unclear, missing key events, or if you need to see more clips to determine the order.
-- Critical Distinction: 
-  - "Should X be done first?" = Look for INSTRUCTIONS/intended order
-  - "What happened before/after X?" = Look for ACTUAL sequence of events
-- Summary format: Clearly indicate temporal information with explicit clip IDs. Format: "In clip [X], [character/event] [action]." List events in chronological order.
-
-3. **Counting Questions** (questions asking "how many", "how many times", "how many pieces", "how many kinds"):
-- CRITICAL: You MUST watch ALL provided video clips (up to 5 clips) to ensure accurate counting. Do NOT answer early even if you see some occurrences - you must continue to [Search] through all clips to get the complete count.
-- [Answer] is NOT ALLOWED for counting questions.
-- [Search] is ALWAYS used for counting questions until you reach the last clip. Continue searching through all clips, explicitly listing each occurrence observed.
-- Summary format: MUST clearly indicate counts per clip with explicit clip IDs. Format: "In clip [X], [event] occurred [count] time(s)." Example: "In clip 8, the remote was used once; in clip 11, the remote was used once."
-
-Examples:
-
-Question: Where is the book Lucky read just now?
-Current clip ID: 9
-Previous summaries: Clip 8: Lucky reads a book in the bedroom.
-Video shows: Lucky placing the book on the bedside table
-Output:
-Action: [Answer]
-Content: The book is on the bedside table.
-
-Question: Where is the book Lucky read just now?
-Current clip ID: 9
-Previous summaries: Clip 8: Lucky reads a book in the bedroom.
-Video shows: Lucky placing the book, but the specific furniture is not clearly visible
-Output:
-Action: [Search]
-Content: In clip 9, Lucky places the book in the bedroom, but the specific location (which furniture or surface) is not clearly visible in this clip.
-
-Question: What happened after Alice received the gift?
-Current clip ID: 17
-Previous summaries: Clip 15: Bob gives Alice a wrapped gift box. Clip 16: Alice unwraps the gift and sees it's a book.
-Video shows: Alice reading the book and thanking Bob
-Output:
-Action: [Answer]
-Content: After receiving the gift, Alice unwrapped it, read the book, and thanked Bob.
-
-Question: Should the balloons be put up first?
-Current clip ID: 10
-Previous summaries: None (first clip)
-Video shows: Betty instructing to put up balloons, but the instruction doesn't specify the order
-Output:
-Action: [Search]
-Content: In clip 10, Betty instructs to put up balloons, but the instruction does not clearly specify whether balloons should be put up first or if other steps should come before.
-
-Question: How many times was the air-conditioning remote used?
-Current clip ID: 11
-Previous summaries: Clip 8: The air-conditioning remote was used once. Clip 9: No remote usage. Clip 10: No remote usage.
-Video shows: Robot uses the air-conditioning remote once
-Output:
-Action: [Search]
-Content: In clip 11, the air-conditioning remote was used once. Total so far: clip 8 (once), clip 11 (once). Need to verify if this is the last clip.
 """
 
 
@@ -793,28 +662,11 @@ You are given a 30-second video (sequential frames) and a question. This is the 
 
 **Context**: This is the last clip. You have the current clip ID, the current clip frames, and summaries from all previous clips. Use the current clip and all summaries together to answer.
 
-**Requirement**:
-You MUST give a concrete answer. Refusals (e.g. "information is insufficient", "I don't know", "cannot determine", "not explicitly indicated", "the video does not show") are NOT acceptable. If uncertain, make a reasonable guess from the available information.
-
-**SPECIAL QUESTION TYPES**:
-1. **Counting Questions** (questions asking "how many", "how many times", "how many pieces", "how many kinds"):
-- Carefully review ALL previous summaries to count ALL occurrences across all watched clips.
-- Make sure to count each occurrence only once and provide the total count.
-- Example: If previous summaries show "Clip 8: remote used once; Clip 11: remote used once", the answer is "The remote was used twice."
-
-2. **Spatial/Location Questions** (questions asking "where", "which place"):
-- Review all previous summaries and current clip to determine the specific location.
-- If previous summaries only show generic locations, use the current clip to identify the specific placement.
-
-3. **Temporal Sequence Questions** (questions asking "first", "before", "after", "should X be done first"):
-- Review all previous summaries and current clip to determine the complete sequence.
-- Distinguish between instructions ("should X be done first?") and actual sequence ("what happened before/after X?").
-
 Checklist: 
-- [ ] The answer is in one sentence and under 20 words.
-- [ ] The answer is a direct, concrete statement—not a refusal to answer (e.g. "insufficient information", "I don't know", "cannot determine", "not explicitly indicated", or "the video does not show" is NOT ACCEPTABLE).
+- [ ] The output is exactly one option letter (A, B, C, or D).
+- [ ] Do NOT include option text or any extra words.
 
-**Output**: One sentence, under 20 words. Only the answer; no explanation.
+**Output**: One option letter only (A/B/C/D). No explanation.
 """
 
 

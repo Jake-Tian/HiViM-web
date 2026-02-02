@@ -42,7 +42,7 @@ def process_full_video(frames_dir, output_graph_path=None, output_episodic_memor
         key=lambda x: int(Path(x).name)
     )
 
-    # image_folders = image_folders[:2] # Comment this out to process all clips
+    image_folders = image_folders[:4] # Comment this out to process all clips
     
     character_appearance = {}
     previous_conversation = False
@@ -287,7 +287,7 @@ def main():
     log_file = open("log.txt", "w", encoding="utf-8")
     sys.stdout = Tee(log_file)
     
-    video_list = ["Efk3K4epEzg"]
+    video_list = ["HLDPA3FTUJ4"]
 
     for video_name in video_list:
         try:

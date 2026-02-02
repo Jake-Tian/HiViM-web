@@ -63,6 +63,17 @@ def _update_token_usage(video_name, total_tokens):
         fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
+def _format_question_with_options(question):
+    if isinstance(question, dict):
+        question_text = question.get("question_text") or question.get("question") or ""
+        options = question.get("options") or {}
+        if isinstance(options, dict) and options:
+            options_text = "\n".join([f"{k}: {v}" for k, v in options.items()])
+            return f"{question_text}\nOptions:\n{options_text}"
+        return question_text
+    return question
+
+
 def reason(question, graph, video_name):
     """
     Reason about a question using the graph and optionally watching video clips.
@@ -81,15 +92,16 @@ def reason(question, graph, video_name):
             - 'final_answer': The final answer to the question
     """
     start_time = time.time()
+    question_text = _format_question_with_options(question)
     result = {
-        'question': question,
+        'question': question_text,
         'parse_query_output': None,
         'graph_search_results': None,
         'semantic_video_output': None,
         'video_answer_outputs': None,
         'final_answer': None
     }
-    print("Question:", question)
+    print("Question:", question_text)
 
     #--------------------------------
     # Part 1: Search the graph
@@ -97,13 +109,13 @@ def reason(question, graph, video_name):
     print("\n[Step 1] Searching the graph...")
     try:
         # Parse query using LLM
-        parse_query_response, _ = generate_text_response(prompt_parse_query + "\n" + question)
+        parse_query_response, _ = generate_text_response(prompt_parse_query + "\n" + question_text)
         result['parse_query_output'] = parse_query_response
         print("Parse Query Output:")
         print(parse_query_response)
         
         # Search the graph with parsed query
-        graph_search_results = search_with_parse(question, graph, parse_query_response)
+        graph_search_results = search_with_parse(question_text, graph, parse_query_response)
         result['graph_search_results'] = graph_search_results
         # print("\nGraph Search Results:")
         # print(graph_search_results)
@@ -116,7 +128,7 @@ def reason(question, graph, video_name):
     #--------------------------------
     print("\n[Step 2] Evaluating semantic answer...")
     try:
-        semantic_result = evaluate_semantic_answer(question, result['graph_search_results'])
+        semantic_result = evaluate_semantic_answer(question_text, result['graph_search_results'])
         result['semantic_video_output'] = semantic_result['semantic_video_output']
         parsed = semantic_result['parsed_response']
         
@@ -166,7 +178,7 @@ def reason(question, graph, video_name):
     # Watch video clips
     try:
         video_result = watch_video_clips(
-            question, 
+            question_text, 
             clip_ids, 
             video_name, 
             initial_summary=parsed.get('summary'),
