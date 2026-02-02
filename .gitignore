@@ -46,6 +46,9 @@ Thumbs.db
 
 # Local scripts
 test.sh
+run_download_extract_upload_13_100.sh
+run_extract_upload_hippovlog.sh
+run_video_pipeline_hf_frames.sh
 
 # Analysis documents (local only, not for GitHub)
 docs/
